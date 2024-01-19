@@ -1,0 +1,47 @@
+[package]
+name = "nablo"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = { version = "0.4.20", optional = true }
+bytemuck = { version = "1.14.0", features = [ "derive" ] }
+serde = "1.0.192"
+utf8_slice = "1.0.0"
+pollster = "0.3.0"
+time = { version = "0.3.30", features = [ "std", "wasm-bindgen", "macros" ]}
+serde_json = "1.0.108"
+rayon = "1.8.0"
+image = "0.24.7"
+resvg = "0.37.0"
+anyhow = "1.0.78"
+raqote = { version = "0.8.3", default-features = false }
+sw-composite = "0.7.15"
+euclid = "0.22"
+wgpu = { version = "0.18.0", optional = true }
+winit = { version = "0.29.7", features = ["rwh_05"], optional = true }
+fontdue = "0.8.0"
+clipboard = "0.5"
+cfg-if = "1.0.0"
+nablo_shape = { path = "../nablo_shape" }
+nablo_data = { path = "../nablo_data", optional = true }
+thiserror = "1.0.56"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.87"
+wasm-bindgen-futures = "0.4.34"
+web-sys = { version = "0.3.64", features = [
+	"Document",
+	"Window",
+	"Element",
+]}
+
+[features]
+default = ["webgl", "manager", "info", "presets"]
+manager = ["wgpu", "winit"]
+webgl = ["wgpu/webgl"]
+vertexs = ["nablo_shape/vertexs"]
+presets = ["nablo_data"]
+info = []
