@@ -1,4 +1,16 @@
-use crate::Key;
+use crate::Ui;
+use crate::ManagerBuilder;
+use baseview::WindowHandle;
+use raw_window_handle::HasRawWindowHandle;
+use baseview::Size;
+use baseview::WindowScalePolicy;
+use baseview::WindowOpenOptions;
+use crate::Event;
+use baseview::Event as BaseviewEvent;
+use baseview::EventStatus;
+use baseview::WindowHandler;
+use baseview::Window;
+use nablo_shape::prelude::Vec2;
 use clipboard::ClipboardProvider;
 use crate::PASSWORD;
 use sw_composite::muldiv255;
@@ -17,9 +29,7 @@ use euclid::Angle;
 use euclid::Vector2D;
 use euclid::Transform2D;
 use nablo_shape::prelude::shape_elements::Style;
-use nablo_shape::prelude::ShapeElement;
-use winit::dpi::PhysicalSize;
-use crate::integrator::ShapeOutput;
+use nablo_shape::prelude::ShapeElement;use crate::integrator::ShapeOutput;
 use crate::integrator::Output;
 use crate::Integrator;
 use wgpu::include_wgsl;
@@ -27,17 +37,6 @@ use std::iter;
 use crate::Manager;
 use crate::App;
 use crate::Settings;
-use winit::event::Event;
-use crate::event::Event as NabloEvent;
-use winit::window::Icon;
-use winit::window::Fullscreen;
-use winit::dpi::LogicalSize;
-use winit::event_loop::ControlFlow;
-use nablo_shape::math::Vec2;
-use winit::event_loop::EventLoop;
-use winit::window::WindowBuilder;
-use winit::window::Window;
-use winit::event::WindowEvent;
 use pollster::FutureExt as _;
 use raqote::*;
 use anyhow::*;
@@ -66,36 +65,92 @@ const INDICES: &[u32] = &[
 const MOVE_DOWN_LETTER: [char; 36] = ['a','c','e','g','m','n','o','p','q','r','s','u','v','w','x','y','z','α','γ','ε','η','ι','κ','μ','ν','ο','π','ρ','σ','τ','υ','χ','ω','>','<','~'];
 
 /// a struct for using wgpu
-struct State {
+pub(crate) struct State {
 	surface: wgpu::Surface,
 	device: wgpu::Device,
 	queue: wgpu::Queue,
 	config: wgpu::SurfaceConfiguration,
-	size: winit::dpi::PhysicalSize<u32>,
+	size: Vec2,
 	render_pipeline: wgpu::RenderPipeline,
 	diffuse_texture: wgpu::Texture,
 	diffuse_bind_group: wgpu::BindGroup,
 	vertex_buffer: wgpu::Buffer,
 	index_buffer: wgpu::Buffer,
 	shader: wgpu::ShaderModule,
+	fonts: Font,
 }
 
-impl<T: App> Manager<T> {
-	/// run your app
-	pub fn run(&mut self) -> Result<()> {
-		let event_loop = EventLoop::new()?;
-		let window;
-		if let Some(t) = self.settings.size {
-			window = WindowBuilder::new().build(&event_loop)?;
-			window.set_min_inner_size(Some(LogicalSize::new(t.x as f64, t.y as f64)));
-		}else {
-			window = WindowBuilder::new().with_inner_size(LogicalSize::new(640.0,480.0)).build(&event_loop)?;
+impl<T: App + Send + 'static> WindowHandler for Manager<T> {
+	fn on_frame(&mut self, _: &mut Window) {
+		let output = self.integrator.frame(vec!(), |ui| self.app.app(ui));
+		match self.state.render(&output, &self.image_memory) {
+			Ok(_) => {}
+			Err(wgpu::SurfaceError::Lost) => self.state.resize(self.state.size),
+			Err(e) => eprintln!("{:?}", e),
+		};
+		for event in output.output_events {
+			self.handle_event(event)
 		}
-		window.set_title(&self.settings.title);
-		window.set_resizable(self.settings.resizeable);
-		window.set_ime_allowed(true);
-		// TODO: make this changable
-		self.clipboard = match ClipboardProvider::new() {
+	}
+
+	fn on_event(&mut self, _: &mut Window<'_>, event: BaseviewEvent) -> EventStatus {
+		let event: Event = event.into();
+		if let Event::Resized(inner) = event {
+			self.state.resize(inner)
+		}
+		self.integrator.event(&event);
+		EventStatus::Captured
+	}
+}
+
+impl<T: App + Send + 'static> ManagerBuilder<T> {
+	/// see more in baseview documentationg
+	pub fn open_blocking(self){
+		Window::open_blocking(WindowOpenOptions {
+			title: self.settings.title.clone(),
+			size: Size { width: self.settings.size.x as f64, height: self.settings.size.y as f64 },
+			scale: WindowScalePolicy::SystemScaleFactor,
+			gl_config: None
+		}, |window| Manager::new(window, self));
+	}
+
+	/// see more in baseview documentationg
+	pub fn open_parented<P>(parent: &P, settings: Settings, app: T) -> WindowHandle where 
+		P: HasRawWindowHandle
+	{
+		Window::open_parented(parent, WindowOpenOptions {
+			title: settings.title.clone(),
+			size: Size { width: settings.size.x as f64, height: settings.size.y as f64 },
+			scale: WindowScalePolicy::SystemScaleFactor,
+			gl_config: None
+		}, |window| Manager::new(window, Self::new(settings, app)))
+	}
+
+	/// create a new manager builder
+	pub fn new(settings: Settings, app: T) -> Self {
+		Self {
+			settings,
+			app
+		}
+	}
+}
+
+impl<T> ManagerBuilder<T> where 
+	T: Fn(&mut Ui) + Send + Sync
+{
+	/// create a new manager builder with closure
+	pub fn new_closure(settings: Settings, app: T) -> Self {
+		Self {
+			settings,
+			app: app
+		}
+	}
+}
+
+impl<T: App + Send + 'static> Manager<T> {
+	/// create a manager for your app
+	fn new(window: &Window, builder: ManagerBuilder<T>) -> Self {
+		let clipboard = match ClipboardProvider::new() {
 			Ok(t) => Some(t),
 			Err(_) => {
 				#[cfg(feature = "info")]
@@ -105,107 +160,16 @@ impl<T: App> Manager<T> {
 				None
 			}
 		};
-		fn font(input: &[u8]) -> Result<Font> {
-			match fontdue::Font::from_bytes(input, fontdue::FontSettings::default()) {
-				Ok(t) => Ok(t),
-				Err(e) => return Err(anyhow!("{}", e)),
-			}
-		}
-		let font_1 = font(include_bytes!("../font_normal.ttf") as &[u8])?;
-		let font_2 = font(include_bytes!("../font_bold.ttf") as &[u8])?;
-		let font_3 = font(include_bytes!("../font_italic.ttf") as &[u8])?;
-		let font_4 = font(include_bytes!("../font_bold_italic.ttf") as &[u8])?;
-		let fonts = [font_1, font_2, font_3, font_4];
-		if self.settings.fullscreen {
-			window.set_fullscreen(Some(Fullscreen::Borderless(None)))
-		};
-		if let Some((color, size)) = &self.settings.icon {
-			window.set_window_icon(Some(Icon::from_rgba(color.clone(), size.x as u32, size.y as u32)?))
-		}
-		event_loop.set_control_flow(self.settings.control_flow);
-
-		#[cfg(target_arch = "wasm32")]
-		{
-			use winit::platform::web::WindowExtWebSys;
-
-			web_sys::window()
-				.and_then(|win| win.document())
-				.map(|doc| {
-					match doc.get_element_by_id("nablo") {
-						Some(dst) => {
-							let _ = dst.append_child(&web_sys::Element::from(window.canvas().expect("cant sppend canvas")));
-						}
-						None => {
-							let canvas = window.canvas().expect("cant add canvas");
-							canvas.set_width(640);
-							canvas.set_height(480);
-							doc.body().map(|body| body.append_child(&web_sys::Element::from(canvas)));
-						}
-					};
-				}).expect("cant run");
-		}
-		let mut state = State::new(&window);
-
-		event_loop.run(move |winit_event, elwt| {
-			match winit_event {
-				Event::WindowEvent {
-					event,
-					window_id,
-				} => {
-					if window_id == window.id() {
-						self.integrator.event(&event.clone().into());
-						if let Some(clipboard) = &mut self.clipboard {
-							let input =  self.integrator.ui.input();
-							if (input.is_key_pressing(Key::ControlLeft) && input.is_key_pressing(Key::V)) | 
-							(input.is_key_released(Key::ControlLeft) && input.is_key_released(Key::V)) |
-							(input.is_key_pressing(Key::ControlLeft) && input.is_key_released(Key::V)) {
-								let data = clipboard.get_contents();
-								if let Ok(data) = data {
-									self.integrator.event(&NabloEvent::TextInput(data));
-								}else if let Err(e) = data {
-									#[cfg(feature = "info")]
-									println!("get clipboard info failed, info: {}", e);
-									#[cfg(feature = "log")]
-									log::error!("get clipboard info failed, info: {}", e);
-								};
-							}
-						} 
-						match event {
-							WindowEvent::RedrawRequested => {
-								let output = self.integrator.frame(vec!(), |ui| self.app.app(ui));
-								match state.render(&output, &fonts, &self.image_memory) {
-									Ok(_) => {}
-									Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-									Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-									Err(e) => eprintln!("{:?}", e),
-								};
-								for event in output.output_events {
-									self.handle_event(event)
-								}
-								window.request_redraw();
-							},
-							WindowEvent::CloseRequested => {elwt.exit()},
-							WindowEvent::Resized(physical_size) => {
-								state.resize(physical_size)
-							},
-							_ => {}
-						}
-					}
-				},
-				_ => {}
-			}
-		})?;
-		Ok(())
-	}
-
-	/// create a manager for your app
-	pub fn new(app: T) -> Self {
+		let state = State::new(window, &builder.settings);
+		let mut integrator = Integrator::default();
+		integrator.event(&Event::Resized(builder.settings.size));
 		Self {
 			settings: Settings::default(),
-			integrator: Integrator::default(),
+			integrator,
 			image_memory: HashMap::new(),
-			app,
-			clipboard: None
+			app: builder.app,
+			clipboard,
+			state,
 		}
 	}
 
@@ -237,15 +201,8 @@ impl<T: App> Manager<T> {
 }
 
 impl State {
-	fn new(window: &Window) -> Self {
-		let mut size = window.inner_size();
-		if size.width == 0 {
-			size.width = 640
-		}
-		if size.height == 0 {
-			size.height = 480
-		}
-
+	fn new(window: &Window, settings: &Settings) -> Self {
+		let size  = settings.size;
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 			backends: wgpu::Backends::all(),
 			..Default::default()
@@ -273,8 +230,8 @@ impl State {
 		let config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
 			format: caps.formats[0],
-			width: size.width,
-			height: size.height,
+			width: size.x as u32,
+			height: size.y as u32,
 			present_mode: wgpu::PresentMode::Fifo,
 			alpha_mode: caps.alpha_modes[0],
 			view_formats: vec![],
@@ -283,7 +240,7 @@ impl State {
 
 		let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-		let (diffuse_texture,texture_bind_group_layout , diffuse_bind_group) = create_texture([size.width as f32, size.height as f32].into(), &device, &queue);
+		let (diffuse_texture,texture_bind_group_layout , diffuse_bind_group) = create_texture(size, &device, &queue);
 
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Render Pipeline Layout"),
@@ -342,6 +299,15 @@ impl State {
 			}
 		);
 
+		fn font(input: &[u8]) -> Result<Font> {
+			match fontdue::Font::from_bytes(input, fontdue::FontSettings::default()) {
+				Ok(t) => Ok(t),
+				Err(e) => return Err(anyhow!("{}", e)),
+			}
+		}
+		let font_1 = font(include_bytes!("../font_normal.ttf") as &[u8]).expect("font load error...");
+		let fonts = font_1;
+
 		Self {
 			surface,
 			device,
@@ -354,15 +320,16 @@ impl State {
 			vertex_buffer,
 			index_buffer,
 			shader,
+			fonts,
 		}
 	}
 
-	fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-		if new_size.width > 0 && new_size.height > 0 {
+	fn resize(&mut self, new_size: Vec2) {
+		if new_size.x > 0.0 && new_size.y > 0.0 {
 			self.size = new_size;
-			self.config.width = new_size.width;
-			self.config.height = new_size.height;
-			let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture([new_size.width as f32, new_size.height as f32].into() , &self.device, &self.queue);
+			self.config.width = new_size.x as u32;
+			self.config.height = new_size.y as u32;
+			let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture(new_size, &self.device, &self.queue);
 			self.diffuse_texture = diffuse_texture;
 			self.diffuse_bind_group = diffuse_bind_group;
 			let render_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -409,21 +376,10 @@ impl State {
 		}
 	}
 
-	fn render(&mut self, input: &Output<ShapeOutput>, font: &[Font; 4], image_memory: &HashMap<String, NabloImage>) -> Result<(), wgpu::SurfaceError> {
-		cfg_if::cfg_if! {
-			if #[cfg(target_arch = "wasm32")] {
-				let mut binding = draw(&input.shapes, self.size, font, image_memory);
-				let shapes = binding.get_data_u8_mut();
-				shapes.par_chunks_mut(4).for_each(|inside| {
-					let temp = inside[0];
-					inside[0] = inside[2];
-					inside[2] = temp;
-				});
-			}else {
-				let binding = draw(&input.shapes, self.size, font, image_memory);
-				let shapes = binding.get_data_u8();
-			}
-		} 
+	fn render(&mut self, input: &Output<ShapeOutput>, image_memory: &HashMap<String, NabloImage>) -> Result<(), wgpu::SurfaceError> {
+		let fonts = &self.fonts;
+		let binding = draw(&input.shapes, self.size, fonts, image_memory);
+		let shapes = binding.get_data_u8();
 
 		let output = self.surface.get_current_texture()?;
 		let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -431,8 +387,8 @@ impl State {
 			label: Some("Render Encoder"),
 		});
 		let texture_size = wgpu::Extent3d {
-			width: self.size.width,
-			height: self.size.height,
+			width: self.size.x as u32,
+			height: self.size.y as u32,
 			depth_or_array_layers: 1,
 		};
 		self.queue.write_texture(wgpu::ImageCopyTexture {
@@ -442,8 +398,8 @@ impl State {
 			aspect: wgpu::TextureAspect::All,
 		}, &shapes, wgpu::ImageDataLayout {
 			offset: 0,
-			bytes_per_row: Some(self.size.width * 4),
-			rows_per_image: Some(self.size.height),
+			bytes_per_row: Some(self.size.x as u32 * 4),
+			rows_per_image: Some(self.size.y as u32),
 		}, texture_size);
 		// self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertexs));
 		// self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
@@ -480,15 +436,15 @@ impl State {
 	}
 }
 
-fn draw(input: &ShapeOutput, window_size: PhysicalSize<u32>, font: &[Font; 4], image_memory: &HashMap<String, NabloImage>) -> DrawTarget {
-	let mut dt = DrawTarget::new(window_size.width as i32, window_size.height as i32);
+fn draw(input: &ShapeOutput, window_size: Vec2, font: &Font, image_memory: &HashMap<String, NabloImage>) -> DrawTarget {
+	let mut dt = DrawTarget::new(window_size.x as i32, window_size.y as i32);
 	for shape in &input.shapes {
 		handle_shape(&mut dt, &shape.shape, &shape.style, font, image_memory);
 	};
 	dt
 }
 
-fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts: &[Font; 4], image_memory: &HashMap<String, NabloImage>) {
+fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts: &Font, image_memory: &HashMap<String, NabloImage>) {
 	dt.push_clip_rect(IntRect {
 		min: euclid::Point2D::new(style.clip.area[0].x as i32, style.clip.area[0].y as i32),
 		max: euclid::Point2D::new(style.clip.area[1].x as i32, style.clip.area[1].y as i32)
@@ -534,19 +490,20 @@ fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts
 					style.position.y
 				} + line_counter * em;
 			}
-			let (metrics, bitmap) = if t.text_style.is_bold {
-				if t.text_style.is_italic {
-					fonts[3].rasterize(text, em)
-				}else {
-					fonts[1].rasterize(text, em)
-				}
-			}else {
-				if t.text_style.is_italic {
-					fonts[2].rasterize(text, em)
-				}else {
-					fonts[0].rasterize(text, em)
-				}
-			};
+			// let (metrics, bitmap) = if t.text_style.is_bold {
+			// 	if t.text_style.is_italic {
+			// 		fonts[3].rasterize(text, em)
+			// 	}else {
+			// 		fonts[1].rasterize(text, em)
+			// 	}
+			// }else {
+			// 	if t.text_style.is_italic {
+			// 		fonts[2].rasterize(text, em)
+			// 	}else {
+			// 		fonts[0].rasterize(text, em)
+			// 	}
+			// };
+			let (metrics, bitmap) = fonts.rasterize(text, em);
 			let data: Vec<u32> = bitmap.into_par_iter().map(|input| {
 				let input = (input as f32 * style.fill[3] as f32 / 255.0) as u8;
 				if input == 0 {
@@ -671,12 +628,8 @@ impl Default for Settings {
 	fn default() -> Self {
 		Self {
 			max_clicks: 5,
-			size: Some(Vec2::new(640.0,480.0)),
+			size: Vec2::new(640.0,480.0),
 			title: String::from("nablo"),
-			resizeable: true,
-			fullscreen: false,
-			icon: None,
-			control_flow: ControlFlow::Poll,
 		}
 	}
 }

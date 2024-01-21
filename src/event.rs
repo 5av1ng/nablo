@@ -2,14 +2,25 @@
 
 use crate::texture::Image;
 use nablo_shape::math::Vec2;
-#[cfg(feature = "manager")]
-use winit::event::ElementState;
-#[cfg(feature = "manager")]
-use winit::keyboard::KeyCode;
-#[cfg(feature = "manager")]
-use winit::event::WindowEvent;
-#[cfg(feature = "manager")]
-use winit::keyboard::PhysicalKey;
+cfg_if::cfg_if! {
+	if #[cfg(feature = "manager")] {
+		use winit::event::ElementState;
+		use winit::keyboard::KeyCode;
+		use winit::event::WindowEvent;
+		use winit::keyboard::PhysicalKey;
+	}
+}
+
+cfg_if::cfg_if! {
+	if #[cfg(feature = "baseview_manager")] {
+		use baseview::Event as BaseviewEvent;
+		use baseview::MouseButton as BaseviewMouseButton;
+		use baseview::MouseEvent;
+		use baseview::ScrollDelta;
+		use baseview::WindowEvent;
+		use keyboard_types::Key as KeyEvent;
+	}
+}
 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
@@ -426,6 +437,158 @@ impl Into<Key> for PhysicalKey {
 					winit::keyboard::NativeKeyCode::Xkb(t) => Key::Unknown(t as usize),
 				}
 			}
+		}
+	}
+}
+
+#[cfg(feature = "baseview_manager")]
+impl Into<Key> for KeyEvent {
+	fn into(self) -> Key {
+		match self {
+			KeyEvent::Character(inner) => {
+				match inner.as_str() {
+					"a" | "A" => Key::A,
+					"b" | "B" => Key::B,
+					"c" | "C" => Key::C,
+					"d" | "D" => Key::D,
+					"e" | "E" => Key::E,
+					"f" | "F" => Key::F,
+					"g" | "G" => Key::G,
+					"h" | "H" => Key::H,
+					"i" | "I" => Key::I,
+					"j" | "J" => Key::J,
+					"k" | "K" => Key::K,
+					"l" | "L" => Key::L,
+					"m" | "M" => Key::M,
+					"n" | "N" => Key::N,
+					"o" | "O" => Key::O,
+					"p" | "P" => Key::P,
+					"q" | "Q" => Key::Q,
+					"r" | "R" => Key::R,
+					"s" | "S" => Key::S,
+					"t" | "T" => Key::T,
+					"u" | "U" => Key::U,
+					"v" | "V" => Key::V,
+					"w" | "W" => Key::W,
+					"x" | "X" => Key::X,
+					"y" | "Y" => Key::Y,
+					"z" | "Z" => Key::Z,
+					"0" | ")" => Key::Num0,
+					"1" | "!" => Key::Num1,
+					"2" | "@" => Key::Num2,
+					"3" | "#" => Key::Num3,
+					"4" | "$" => Key::Num4,
+					"5" | "%" => Key::Num5,
+					"6" | "^" => Key::Num6,
+					"7" | "&" => Key::Num7,
+					"8" | "*" => Key::Num8,
+					"9" | "(" => Key::Num9,
+					"`" | "~" => Key::Backquote,
+					"\\" | "|" => Key::Backslash,
+					"[" | "{" => Key::BracketLeft,
+					"]" | "}" => Key::BracketRight,
+					"," | "<" => Key::Comma,
+					" " => Key::Space,
+					"-" | "_" => Key::Minus,
+					"=" | "+" => Key::Equal,
+					"/" | "?" => Key::Slash,
+					";" | ":" => Key::Semicolon,
+					"'" | "\"" => Key::Quote,
+					"." | ">" => Key::Period,
+					_ => Key::Unknown(0)
+				}
+			},
+			KeyEvent::ArrowDown => Key::ArrowDown,
+			KeyEvent::ArrowLeft => Key::ArrowLeft,
+			KeyEvent::ArrowRight => Key::ArrowRight,
+			KeyEvent::ArrowUp => Key::ArrowUp,
+			KeyEvent::Escape => Key::Escape,
+			KeyEvent::Tab => Key::Tab,
+			KeyEvent::Backspace => Key::Backspace,
+			KeyEvent::Enter => Key::Enter,
+			KeyEvent::Insert => Key::Insert,
+			KeyEvent::Delete => Key::Delete,
+			KeyEvent::Home => Key::Home,
+			KeyEvent::End => Key::End,
+			KeyEvent::PageUp => Key::PageUp,
+			KeyEvent::PageDown => Key::PageDown,
+			KeyEvent::PrintScreen => Key::PrintScreen,
+			KeyEvent::Pause => Key::Pause,
+			KeyEvent::ScrollLock => Key::ScrollLock,
+			KeyEvent::Control => Key::ControlLeft,
+			KeyEvent::CapsLock => Key::CapsLock,
+			KeyEvent::Shift => Key::ShiftLeft,
+			KeyEvent::Alt => Key::AltLeft,
+			KeyEvent::F1 => Key::F1,
+			KeyEvent::F2 => Key::F2,
+			KeyEvent::F3 => Key::F3,
+			KeyEvent::F4 => Key::F4,
+			KeyEvent::F5 => Key::F5,
+			KeyEvent::F6 => Key::F6,
+			KeyEvent::F7 => Key::F7,
+			KeyEvent::F8 => Key::F8,
+			KeyEvent::F9 => Key::F9,
+			KeyEvent::F10 => Key::F10,
+			KeyEvent::F11 => Key::F11,
+			KeyEvent::F12 => Key::F12,
+			_ => Key::Unknown(0)
+		}
+	}
+}
+
+#[cfg(feature = "baseview_manager")]
+impl Into<Event> for BaseviewEvent {
+	fn into(self) -> Event {
+		match self {
+			BaseviewEvent::Mouse(event) => {
+				match event {
+					MouseEvent::CursorMoved{ position, .. } => {
+						Event::CursorMoved(Vec2::new(position.x as f32, position.y as f32))
+					},
+					MouseEvent::ButtonPressed{ button, .. } => {
+						match button {
+							BaseviewMouseButton::Left => Event::MouseClick(MouseButton::Left),
+							BaseviewMouseButton::Middle => Event::MouseClick(MouseButton::Middle),
+							BaseviewMouseButton::Right => Event::MouseClick(MouseButton::Right),
+							BaseviewMouseButton::Back => Event::MouseClick(MouseButton::Back),
+							BaseviewMouseButton::Forward => Event::MouseClick(MouseButton::Forward),
+							BaseviewMouseButton::Other(inner) => Event::MouseClick(MouseButton::Other(inner as usize))
+						}
+					},
+					MouseEvent::ButtonReleased{ button, .. } => {
+						match button {
+							BaseviewMouseButton::Left => Event::MouseRelease(MouseButton::Left),
+							BaseviewMouseButton::Middle => Event::MouseRelease(MouseButton::Middle),
+							BaseviewMouseButton::Right => Event::MouseRelease(MouseButton::Right),
+							BaseviewMouseButton::Back => Event::MouseRelease(MouseButton::Back),
+							BaseviewMouseButton::Forward => Event::MouseRelease(MouseButton::Forward),
+							BaseviewMouseButton::Other(inner) => Event::MouseRelease(MouseButton::Other(inner as usize))
+						}
+					},
+					MouseEvent::WheelScrolled{ delta, .. } => {
+						match delta {
+							ScrollDelta::Lines{ x, y } => Event::Scroll(Vec2::new(x, y) * 16.0),
+							ScrollDelta::Pixels{ x, y } => Event::Scroll(Vec2::new(x, y)),
+						}
+					},
+					MouseEvent::CursorEntered => Event::CursorEntered,
+					MouseEvent::CursorLeft => Event::CursorLeft,
+					_ => Event::NotSupported
+				}
+			},
+			BaseviewEvent::Keyboard(event) => {
+				let key: Key = event.key.into();
+				match event.state {
+					keyboard_types::KeyState::Down => Event::KeyPressed(key),
+					keyboard_types::KeyState::Up => Event::KeyRelease(key),
+				}
+			},
+			BaseviewEvent::Window(event) => {
+				match event {
+					WindowEvent::Resized(inner) => Event::Resized(Vec2::new(inner.logical_size().width as f32, inner.logical_size().height as f32)),
+					_ => Event::NotSupported
+				}
+			},
 		}
 	}
 }

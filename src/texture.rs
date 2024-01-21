@@ -1,6 +1,6 @@
 //! texture the host will handle.
 
-use winit::dpi::PhysicalSize;
+#[cfg(any(feature = "manager", feature = "baseview_manager"))]
 use raqote::DrawTarget;
 use nablo_shape::prelude::Vec2;
 
@@ -12,10 +12,11 @@ pub struct Image {
 	pub size: Vec2
 }
 
-pub(crate) fn create_texture(size: PhysicalSize<u32>, device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::BindGroupLayout, wgpu::BindGroup) {
+#[cfg(any(feature = "manager", feature = "baseview_manager"))]
+pub(crate) fn create_texture(size: Vec2, device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::BindGroupLayout, wgpu::BindGroup) {
 	let texture_size = wgpu::Extent3d {
-		width: size.width,
-		height: size.height,
+		width: size.x as u32,
+		height: size.y as u32,
 		depth_or_array_layers: 1,
 	};
 
@@ -46,7 +47,7 @@ pub(crate) fn create_texture(size: PhysicalSize<u32>, device: &wgpu::Device, que
 		}
 	);
 
-	let dt = DrawTarget::new(size.width as i32, size.height as i32);
+	let dt = DrawTarget::new(size.x as i32, size.y as i32);
 	let shapes = dt.get_data_u8();
 
 	queue.write_texture(wgpu::ImageCopyTexture {
@@ -56,8 +57,8 @@ pub(crate) fn create_texture(size: PhysicalSize<u32>, device: &wgpu::Device, que
 		aspect: wgpu::TextureAspect::All,
 	}, &shapes, wgpu::ImageDataLayout {
 		offset: 0,
-		bytes_per_row: Some(size.width * 4),
-		rows_per_image: Some(size.height),
+		bytes_per_row: Some(size.x as u32 * 4),
+		rows_per_image: Some(size.y as u32),
 	}, texture_size);
 	let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
 	let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {

@@ -37,8 +37,34 @@
  * ```
  */
 
-#[cfg(feature = "manager")]
-mod manager;
+#[cfg(all(feature = "manager", feature = "baseview_manager"))]
+compile_error!("feature \"manager\" and feature \"baseview_manager\" cannot be enabled at the same time");
+
+cfg_if::cfg_if! {
+	if #[cfg(feature = "manager")] {
+		mod manager;
+		use clipboard::ClipboardContext;
+		use crate::texture::Image;
+		use crate::integrator::Integrator;
+		use winit::event_loop::ControlFlow;
+	}else if #[cfg(feature = "baseview_manager")] {
+		mod baseview_manager;
+		use clipboard::ClipboardContext;
+		use crate::texture::Image;
+		use crate::integrator::Integrator;
+	}
+}
+
+cfg_if::cfg_if! {
+	if #[cfg(feature = "vertexs")] {
+		use nablo_shape::prelude::ShapeElement;
+		use nablo_shape::prelude::shape_elements::Text as ShapeText;
+		use nablo_shape::prelude::shape_elements::Style as ShapeStyle;
+		use nablo_shape::prelude::shape_elements::Image as ShapeImage;
+		use std::collections::BTreeMap;
+		use nablo_shape::shape::shape_elements::Vertex;
+	}
+}
 
 mod ui;
 mod response;
@@ -51,11 +77,9 @@ pub mod integrator;
 #[cfg(feature = "presets")]
 pub mod presets;
 
-use clipboard::ClipboardContext;
+
 use crate::event::Touch;
-use crate::texture::Image;
 use crate::event::OutputEvent;
-use crate::integrator::Integrator;
 use std::ops::Sub;
 use time::Duration;
 use nablo_shape::shape::shape_elements::Layer;
@@ -71,21 +95,6 @@ use nablo_shape::math::Area;
 use nablo_shape::math::Vec2;
 use time::OffsetDateTime;
 
-#[cfg(feature = "manager")]
-use winit::event_loop::ControlFlow;
-
-#[cfg(feature = "vertexs")]
-use nablo_shape::prelude::ShapeElement;
-#[cfg(feature = "vertexs")]
-use nablo_shape::prelude::shape_elements::Text as ShapeText;
-#[cfg(feature = "vertexs")]
-use nablo_shape::prelude::shape_elements::Style as ShapeStyle;
-#[cfg(feature = "vertexs")]
-use nablo_shape::prelude::shape_elements::Image as ShapeImage;
-#[cfg(feature = "vertexs")]
-use std::collections::BTreeMap;
-#[cfg(feature = "vertexs")]
-use nablo_shape::shape::shape_elements::Vertex;
 
 /// will replace when typing in a input setted `is_password = true`
 pub const PASSWORD: char = '●';
@@ -114,39 +123,83 @@ impl Sub for Instant {
 		self.offset - rhs.offset
 	}
 }
+cfg_if::cfg_if!{
+	if #[cfg(feature = "manager")] {
+		/// a setting to Manager
+		pub struct Settings {
+			/// how much clicks should we save?
+			pub max_clicks: usize,
+			/// how large is our window? if window is resizeable, this would be min size
+			pub size: Option<Vec2>,
+			pub title: String,
+			pub resizeable: bool,
+			pub fullscreen: bool,
+			pub icon: Option<(Vec<u8>,Vec2)>,
+			pub control_flow: ControlFlow,
+		}
 
-/// a setting to Manager
-#[cfg(feature = "manager")]
-pub struct Settings {
-	/// how much clicks should we save?
-	pub max_clicks: usize,
-	/// how large is our window? if window is resizeable, this would be min size
-	pub size: Option<Vec2>,
-	pub title: String,
-	pub resizeable: bool,
-	pub fullscreen: bool,
-	pub icon: Option<(Vec<u8>,Vec2)>,
-	pub control_flow: ControlFlow,
-}
+		/// a trait for your app
+		pub trait App {
+			/// where you add widgets
+			fn app(&mut self, ui: &mut Ui);
+		}
 
-/// a trait for your app
-#[cfg(feature = "manager")]
-pub trait App {
-	/// where you add widgets
-	fn app(&mut self, ui: &mut Ui);
-}
+		/// your handle to nablo
+		pub struct Manager<T: App> {
+			/// settings to Manager, such as window size.
+			pub settings: Settings,
+			clipboard: Option<ClipboardContext>,
+			image_memory: HashMap<String, Image>,
+			/// where you add wigets
+			integrator: Integrator,
+			/// your app
+			pub app: T
+		}
+	}else if #[cfg(feature = "baseview_manager")] {
+		use baseview_manager::State;
+		/// a setting to Manager
+		#[derive(Clone)]
+		pub struct Settings {
+			/// how much clicks should we save?
+			pub max_clicks: usize,
+			/// how large is our window? if window is resizeable, this would be min size
+			pub size: Vec2,
+			pub title: String,
+		}
 
-/// your handle to nablo
-#[cfg(feature = "manager")]
-pub struct Manager<T: App> {
-	/// settings to Manager, such as window size.
-	pub settings: Settings,
-	clipboard: Option<ClipboardContext>,
-	image_memory: HashMap<String, Image>,
-	/// where you add wigets
-	integrator: Integrator,
-	/// your app
-	pub app: T
+		/// a trait for your app
+		pub trait App {
+			/// where you add widgets
+			fn app(&mut self, ui: &mut Ui);
+		}
+
+		/// a builder to build [`Manger`]
+		pub struct ManagerBuilder<T: App> {
+			pub settings: Settings,
+			pub app: T,
+		}
+
+		impl<T> App for T where 
+			T: Fn(&mut Ui)
+		{
+			fn app(&mut self, ui: &mut Ui) {
+				self(ui);
+			}
+		}
+
+		/// your handle to nablo
+		pub struct Manager<T: App> {
+			/// settings to Manager, such as window size.
+			pub settings: Settings,
+			clipboard: Option<ClipboardContext>,
+			image_memory: HashMap<String, Image>,
+			/// where you add wigets
+			integrator: Integrator,
+			/// your app
+			pub app: T,
+			state: State
+		}
+	}
 }
 
 #[derive(Clone)]
