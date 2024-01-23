@@ -588,7 +588,7 @@ fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts
 			let transform = Transform2D::identity()
 				.then_translate(Vector::new(style.transform_origin.x, style.transform_origin.y))
 				.then_rotate(Angle { radians: style.rotate })
-				.then_scale(1.0 / style.size.x, 1.0 / style.size.y)
+				.then_scale(style.size.x, style.size.y)
 				.then_translate(Vector::new(-style.transform_origin.x, -style.transform_origin.y))
 				.then_translate(Vector2D::new(-style.position.x, -style.position.y))
 				.then_scale(t.size.x / image.size.x, t.size.y / image.size.y);

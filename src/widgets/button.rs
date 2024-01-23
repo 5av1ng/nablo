@@ -112,7 +112,6 @@ impl Widget for Button {
 	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response {
 		let space = self.space.unwrap_or(ui.style().space);
 		let mut painter = ui.painter();
-		painter.set_position(ui.available_position());
 		let text_area = self.text_area(&mut painter);
 		let icon_area = self.painter.paint_area;
 		let height = if icon_area.height() > text_area.height() {

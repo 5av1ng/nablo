@@ -47,7 +47,7 @@ impl Default for Ui {
 			last_frame: Instant::now(),
 			events: vec!(),
 			input_state: InputState::default(),
-			window: Area::default(),
+			window: Area::new_with_origin([640.0,480.0].into()),
 			style: Style::default(),
 			available_id: (String::new(), 0),
 			language: String::new(),
@@ -255,6 +255,7 @@ impl Ui {
 
 	/// to get a sub reigon of current window, usually used in [`crate::Container`], returns all inner element's [`crate::Response`] and a empty [`crate::Response`].
 	pub fn sub_ui<R, C: Container>(&mut self, area: Area, id: String, paint_style: PaintStyle, offset: Vec2, container: &mut C ,widgets: impl FnOnce(&mut Ui, &mut C) -> R) -> InnerResponse<R> {
+		let id = format!("{}||{}",self.available_id.0 ,id);
 		let mut sub_ui = Self {
 			memory: self.memory.clone(),
 			memory_clip: self.memory_clip.clone(),
@@ -275,15 +276,14 @@ impl Ui {
 		};
 		let return_value = widgets(&mut sub_ui, container);
 		let inner_response: Vec<Response> = sub_ui.memory.clone().into_par_iter().filter_map(|(key, response)| {
-			let binding: Vec<&str> = key.split("----").collect();
-			if binding.len() == 2 {
-				if binding[0] == id {
+			if utf8_slice::len(&key) < utf8_slice::len(&id) {
+				None
+			}else {
+				if utf8_slice::till(&key, utf8_slice::len(&id)) == id {
 					Some(response.response.clone())
 				}else {
 					None
 				}
-			}else {
-				None
 			}
 		}).collect();
 		let area = Area::ZERO;
@@ -472,6 +472,7 @@ impl Ui {
 		let mut update = |input: &mut Vec<(String, MemoryTemp)>| {
 			for (id ,res) in input {
 				res.response.metadata.update(&mut self.input_state, &res.response.area);
+				// println!("{}", res.response.id);
 				self.memory.insert(id.to_string(), res.clone());
 			}
 		};

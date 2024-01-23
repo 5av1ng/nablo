@@ -23,7 +23,6 @@ impl Widget for Label {
 
 	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response {
 		let mut painter = ui.painter();
-		painter.set_position(ui.available_position());
 		let text_area = self.text_area(&mut painter);
 		let area = match area {
 			Some(t) => t,

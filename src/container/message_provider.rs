@@ -18,7 +18,9 @@ impl MessageProvider {
 		}else {
 			MessageTemp::default()
 		};
-		temp.messages.insert(message.id.clone(), (message, Instant::now()).into());
+		if let None = temp.messages.get(&message.id) {
+			temp.messages.insert(message.id.clone(), (message, Instant::now()).into());
+		}
 		ui.memory_save(&id, &temp);
 	}
 
