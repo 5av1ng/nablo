@@ -12,7 +12,7 @@ impl MessageProvider {
 	/// display a new message
 	pub fn message(&self, message: impl Into<Message>, ui: &mut Ui) {
 		let message = message.into();
-		let id = self.get_id(ui);
+		let id = ui.container_id(self);
 		let mut temp: MessageTemp = if let Some(t) = ui.memory_read(&id) {
 			t
 		}else {
@@ -26,7 +26,7 @@ impl MessageProvider {
 
 	/// change a exist message, will do nothing if requested message doest exist
 	pub fn message_change(&self, message_id: &String, change: impl FnOnce(&mut Message), ui: &mut Ui) {
-		let id = self.get_id(ui);
+		let id = ui.container_id(self);
 		let mut temp: MessageTemp = if let Some(t) = ui.memory_read(&id) {
 			t
 		}else {
@@ -106,10 +106,9 @@ impl Container for MessageProvider {
 	fn get_id(&self, _: &mut Ui) -> String { self.id.clone() }
 	fn area(&self, ui: &mut Ui) -> Area { ui.window_area() }
 	fn layer(&self, ui: &mut Ui) -> Layer { ui.paint_style().layer }
-	fn begin(&mut self, _: &mut Ui, _: &mut Painter, _: &Response) -> bool { true }
-	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>) {
-		let id = self.get_id(ui);
-		let mut temp: MessageTemp = if let Some(t) = ui.memory_read(&id) {
+	fn begin(&mut self, _: &mut Ui, _: &mut Painter, _: &Response, _: &String) -> bool { true }
+	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>, id: &String) {
+		let mut temp: MessageTemp = if let Some(t) = ui.memory_read(id) {
 			t
 		}else {
 			MessageTemp::default()
@@ -159,6 +158,6 @@ impl Container for MessageProvider {
 				true
 			}
 		});
-		ui.memory_save(&id, &temp);
+		ui.memory_save(id, &temp);
 	}
 }

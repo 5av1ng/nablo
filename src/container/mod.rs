@@ -21,7 +21,10 @@ pub struct Card {
 	status: Status,
 	color: Option<Color>,
 	scrollable: [bool; 2],
-	dragable: bool
+	dragable: bool,
+	resizable: bool,
+	stroke_width: f32,
+	stroke_color: Option<Color>,
 }
 
 /// show a collapsing area.

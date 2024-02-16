@@ -372,7 +372,7 @@ impl Widget for SingleTextInput<'_> {
 		};
 		let y = (response.area.height() - 16.0) / 2.0;
 		let position = response.area.area[0] + Vec2::new(x, y);
-		painter.set_clip([text_start + response.area.area[0].x, response.area.area[0].y, response.area.area[1].x - space, response.area.area[1].y].into());
+		painter.set_clip(Area::from([text_start + response.area.area[0].x, response.area.area[0].y, response.area.area[1].x - space, response.area.area[1].y].into()).cross_part(&painter.style().clip));
 		self.text = self.text.clone().set_width(response.area.width());
 		self.text.text_draw(painter, position, ui);
 		// # pointer
@@ -393,7 +393,6 @@ impl Widget for SingleTextInput<'_> {
 			painter.set_color(ui.style().primary_color.set_alpha(100));
 			painter.set_position(position);
 			painter.rect([select_width, 16.0].into(), Vec2::ZERO);
-			// println!("{:?} front_x: {}, select_width: {}", select, front_x, select_width);
 		}
 
 		painter.brighter(light_factor);
@@ -409,7 +408,7 @@ impl Widget for SingleTextInput<'_> {
 		};
 		let width = match self.width {
 			Some(t) => t,
-			None => ui.window_area().right_top().x - ui.available_position().x - space
+			None => ui.window_area().width() - (ui.available_position().x - ui.start_position().x) - space
 		};
 		let area = match area {
 			Some(t) => t,

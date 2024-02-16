@@ -19,8 +19,8 @@ impl<'a, T: Num> DragableValue<'a, T> {
 		Self {
 			text: "".into(),
 			input,
-			step: T::from_f64(1.0),
-			speed: T::from_f64(1.0),
+			step: 1.0,
+			speed: 1.0,
 			suffix: "".into(),
 			prefix: "".into(),
 			non_negative: false
@@ -28,7 +28,7 @@ impl<'a, T: Num> DragableValue<'a, T> {
 	}
 
 	/// set speed to dragable value
-	pub fn speed(self, speed: T) -> Self {
+	pub fn speed(self, speed: f64) -> Self {
 		Self {
 			speed,
 			..self
@@ -36,7 +36,7 @@ impl<'a, T: Num> DragableValue<'a, T> {
 	}
 
 	/// set step to dragable value
-	pub fn step(self, step: T) -> Self {
+	pub fn step(self, step: f64) -> Self {
 		Self {
 			step,
 			..self
@@ -68,33 +68,18 @@ impl<'a, T: Num> DragableValue<'a, T> {
 	}
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct DragableValueTemp {
-	last_position: Option<Vec2>
-}
-
 impl<T: Num> Widget for DragableValue<'_, T> {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
 		// logic
 		let step = self.step.to_f64();
 		let speed = self.speed.to_f64();
-		let mut temp: DragableValueTemp = if let Some(t) = ui.memory_read(&response.id) {
-			t
-		}else {
-			DragableValueTemp::default()
-		};
-		if let Some(t) = response.drag() {
-			if let Some(l) = temp.last_position {
-				let change = (t.x - l.x) as f64 * speed;
-				let mut input = ((self.input.to_f64() + change) / step).round() * step;
-				if self.non_negative && input < 0.0 {
-					input = 0.0;
-				}
-				*self.input = T::from_f64(input);
-			}
+		let drag_delta = response.drag_delta().x;
+		let change = drag_delta as f64 * speed;
+		let mut input = ((self.input.to_f64() + change) / step).round() * step;
+		if self.non_negative && input < 0.0 {
+			input = 0.0;
 		}
-		temp.last_position = response.drag();
-		ui.memory_save(&response.id, temp);
+		*self.input = T::from_f64(input);
 
 		// animation caculate
 		let animation_time = Duration::milliseconds(250);

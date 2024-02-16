@@ -6,6 +6,7 @@ pub use crate::widgets::*;
 #[cfg(feature = "presets")]
 pub use crate::presets::*;
 pub use crate::*;
+pub use crate::event::*;
 
 #[cfg(feature = "nablo_data")]
 pub use nablo_data::*;

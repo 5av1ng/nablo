@@ -6,7 +6,8 @@ use crate::Ui;
 use anyhow::*;
 
 /// display a tree of your struct
-pub fn settings<'a, T: serde::Serialize + serde::Deserialize<'a>>(input: &mut T, id: String, ui: &mut Ui) -> Result<()> {
+pub fn settings<'a, T: serde::Serialize + serde::Deserialize<'a>>(input: &mut T, id: impl Into<String>, ui: &mut Ui) -> Result<()> {
+	let id = id.into();
 	let mut data = to_data(input)?;
 	setting_inner(&mut data, id, ui);
 	*input = from_data(&mut data)?;
@@ -16,33 +17,41 @@ pub fn settings<'a, T: serde::Serialize + serde::Deserialize<'a>>(input: &mut T,
 
 fn setting_inner(input: &mut ParsedData, id: String, ui: &mut Ui) {
 	let name = input.name.clone();
+	let id = format!("{}%%{}", id, name);
 	match &mut input.data {
 		DataEnum::Node(node) => {
-			ui.show(&mut Collapsing::new(id.clone() + &name).set_text(name.clone()), |ui, _| {
-				for inner in node {
-					setting_inner(inner, id.clone() + &name, ui);
-				}
-			});
+			if node.len() == 0 {
+				ui.label(&name);
+			}else {
+				ui.show(&mut Collapsing::new(id.clone()).set_text(name.clone()), |ui, _| {
+					for inner in node {
+						setting_inner(inner, id.clone(), ui);
+					}
+				});
+			}
 		},
 		DataEnum::Map(map) => {
 			let (mut inner1, mut inner2) = *map.clone();
-			setting_inner(&mut inner1, id.clone() + &name + "1", ui);
-			setting_inner(&mut inner2, id + &name + "2", ui);
+			setting_inner(&mut inner1, id.clone() + "1", ui);
+			setting_inner(&mut inner2, id + "2", ui);
 			*map = Box::new((inner1, inner2));
 		},
 		DataEnum::Enum(enum_string, node) => {
-			ui.label(enum_string.clone());
-			ui.show(&mut Collapsing::new(id.clone() + &name).set_text(name.clone()), |ui, _| {
-				for inner in node {
-					setting_inner(inner, id.clone() + &name, ui);
-				}
-			});
+			if node.len() == 0 {
+				ui.label(format!("{}: {}", name, enum_string));
+			}else {
+				ui.show(&mut Collapsing::new(id.clone()).set_text(format!("{}: {}", name, enum_string)), |ui, _| {
+					for inner in node {
+						setting_inner(inner, id.clone(), ui);
+					}
+				});
+			}
 		},
 		DataEnum::Data(_) => {},
 		DataEnum::String(inner) => {
 			ui.horizental(|ui| {
 				ui.label(name.clone());
-				ui.label(inner.clone());
+				ui.single_input(inner);
 			});
 		},
 		DataEnum::Int(num, non_neg) => {

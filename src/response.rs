@@ -1,3 +1,5 @@
+use crate::event::TouchPhase;
+use crate::Touch;
 use crate::parse_json;
 use nablo_shape::shape::shape_elements::Layer;
 use crate::Key;
@@ -19,9 +21,19 @@ impl Response {
 		self.metadata.click_info.pressed_mouse.len() >= 1
 	}
 
+	/// is this widget was pressing this frame?
+	pub fn is_pressing(&self) -> bool {
+		self.metadata.click_info.is_pressed
+	}
+
+	/// is this widget was released this frame?
+	pub fn is_released(&self) -> bool {
+		self.metadata.click_info.released_mouse.len() >= 1
+	}
+
 	/// is this widget was clicked this frame?
 	pub fn is_clicked(&self) -> bool {
-		self.metadata.click_info.released_mouse.len() >= 1
+		self.is_released() && self.metadata.click_info.is_pressed
 	}
 
 	/// is this widget was multi clicked this frame?
@@ -30,8 +42,13 @@ impl Response {
 			return false
 		}
 		let mut result = true;
+
+		if Instant::now() - self.metadata.click_info.release_time[self.metadata.click_info.release_time.len() - 1] > Duration::milliseconds(250) {
+			return false
+		}
+
 		for click in self.metadata.click_info.release_time.len() - multi..self.metadata.click_info.release_time.len()-1 {
-			if self.metadata.click_info.release_time[click + 1] - self.metadata.click_info.release_time[click] > Duration::seconds(1) {
+			if self.metadata.click_info.release_time[click + 1] - self.metadata.click_info.release_time[click] > Duration::milliseconds(250) {
 				result = false
 			}
 		}
@@ -55,6 +72,11 @@ impl Response {
 			return Some(self.metadata.pointer_position? - self.metadata.drag_info.last_drag_start_position?);
 		}
 		None
+	}
+
+	/// how much do we drag so far refer to last frame?
+	pub fn drag_delta(&self) -> Vec2 {
+		self.metadata.drag_info.drag_delta
 	}
 
 	/// how long do we drag so far? [`Option::None`] for not draging
@@ -184,24 +206,37 @@ impl DragInfo {
 			}
 
 			if self.is_draging {
+				if let Some(t2) = self.last_drag_position {
+					self.drag_delta = t - t2;
+				}else {
+					self.drag_delta = Vec2::ZERO;
+				}
+				self.last_drag_position = Some(t);
 				if input_state.is_any_mouse_released() {
 					self.is_draging = false;
 					self.last_drag_start_position = None;
 					self.drag_start_time = None;
 				}
+			}else {
+				self.last_drag_position = None;
+				self.drag_delta = Vec2::ZERO;
 			}
-
-			if let None = input_state.cursor_position() {
-				self.is_draging = false;
-				self.last_drag_start_position = None;
-				self.drag_start_time = None;
-			}
+		}else {
+			self.is_draging = false;
+			self.last_drag_start_position = None;
+			self.drag_start_time = None;
+			self.last_drag_position = None;
+			self.drag_delta = Vec2::ZERO;
 		}
 	}
 }
 
 impl ClickInfo {
 	pub(crate) fn update(&mut self, input_state: &mut InputState, area: &Area) {
+		if self.is_released {
+			self.is_released = false;
+			self.is_pressed = false;
+		}
 		if let Some(t) = input_state.cursor_position() {
 			if area.is_point_inside(&t) {
 				self.pressed_mouse = input_state.pressed_mouse();
@@ -209,6 +244,7 @@ impl ClickInfo {
 				if input_state.is_any_mouse_pressed_unconsumed() {
 					self.press_time.push(Instant::now());
 					input_state.consume_all_mouse_press();
+					self.is_pressed = true;
 				}
 				if input_state.is_any_mouse_released_unconsumed() {
 					self.release_time.push(Instant::now());
@@ -220,6 +256,9 @@ impl ClickInfo {
 			}
 		}
 
+		if input_state.is_any_mouse_released() {
+			self.is_released = true;
+		}
 		// TODO: Make this value changable
 		if self.press_time.len() > 5 {
 			self.press_time.remove(0);
@@ -296,6 +335,18 @@ impl InputState {
 		self.released_mouse.clear();
 		self.current_scroll = Vec2::ZERO;
 		self.input_text = String::new();
+		let mut key_to_remove = vec!();
+		for (key, (touch, _)) in &mut self.touch {
+			if let TouchPhase::Start = touch.phase {
+				touch.phase = TouchPhase::Hold
+			}
+			if let TouchPhase::End = touch.phase {
+				key_to_remove.push(key.clone())
+			}
+		}
+		for key in key_to_remove {
+			self.touch.remove(&key);
+		}
 	}
 
 	/// is given key pressing in this frame?
@@ -472,6 +523,14 @@ impl InputState {
 		let mut back = vec!();
 		for (key, _) in &self.released_mouse {
 			back.push(key.clone())
+		}
+		back
+	}
+
+	pub fn touches(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, _)) in &self.touch {
+			back.push(touch.clone());
 		}
 		back
 	}

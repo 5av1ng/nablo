@@ -43,6 +43,7 @@ compile_error!("feature \"manager\" and feature \"baseview_manager\" cannot be e
 cfg_if::cfg_if! {
 	if #[cfg(feature = "manager")] {
 		mod manager;
+		mod state;
 		use clipboard::ClipboardContext;
 		use crate::texture::Image;
 		use crate::integrator::Integrator;
@@ -205,6 +206,7 @@ cfg_if::cfg_if!{
 #[derive(Clone)]
 pub(crate) struct MemoryTemp {
 	pub response: Response,
+	pub update_area: Area,
 	pub access_time: usize
 }
 
@@ -325,6 +327,8 @@ pub struct Ui {
 	texture_id: Vec<String>,
 	offset: Vec2,
 	parent_area: Option<Area>,
+	start_position: Vec2,
+	window_crossed: Area,
 }
 
 #[derive(Default, Clone)]
@@ -432,12 +436,16 @@ pub(crate) struct ClickInfo {
 	last_click_position: Option<Vec2>,
 	pressed_mouse: Vec<MouseButton>,
 	released_mouse: Vec<MouseButton>,
+	is_pressed: bool,
+	is_released: bool,
 }
 
 #[derive(Clone, Default)]
 pub(crate) struct DragInfo {
 	drag_start_time: Option<Instant>,
 	last_drag_start_position: Option<Vec2>,
+	last_drag_position: Option<Vec2>,
+	drag_delta: Vec2,
 	is_draging: bool
 }
 
@@ -463,7 +471,7 @@ impl<R> From<(Response,Vec<Response> , R)> for InnerResponse<R> {
 
 /// any thing implied this trait would able to be a container.
 pub trait Container {
-	/// `nablo` need a id to identify this container
+	/// `nablo` need a id to identify this container, Note: this is not actual id of current Container, use [`Ui::container_id()`] to get actual id
 	fn get_id(&self, ui: &mut Ui) -> String;
 	/// we must know how large this container is to show it correctly, contains where you should put your container
 	fn area(&self, ui: &mut Ui) -> Area;
@@ -472,9 +480,9 @@ pub trait Container {
 	/// handle logic part for your containner before showing widgets. 
 	/// the input painter will use as the painter to draw widgets, the painter's offset will be used as container's offect. 
 	/// returns if there's need show inner widgets, true for show.
-	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response) -> bool;
+	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &String) -> bool;
 	/// handle logic part for your containner after showing widgets.
-	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>);
+	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>, id: &String);
 }
 
 pub(crate) fn parse_json<T: for<'a> serde::Deserialize<'a> + Default>(input: &String) -> T  {

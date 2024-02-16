@@ -127,7 +127,7 @@ impl Widget for SelectableValue {
 		}
 
 		// actual draw
-		painter.set_color(background_color.set_alpha((alpha * 200.0) as u8 + 55));
+		painter.set_color(ui.style().background_color.brighter(0.15) + alpha * (background_color - ui.style().background_color.brighter(0.15)));
 		painter.set_position(response.area.area[0]);
 		painter.rect(response.area.width_and_height(), Vec2::same(5.0));
 

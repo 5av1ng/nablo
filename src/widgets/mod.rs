@@ -19,6 +19,7 @@ mod selectable_value;
 mod single_input;
 mod slider;
 mod dragable_value;
+mod divide_line;
 
 /// a general style used by all wigets
 #[derive(Clone)]
@@ -355,7 +356,7 @@ pub struct Empty {}
 
 impl Widget for Empty {
 	fn draw(&mut self, _: &mut Ui, _: &Response, _: &mut Painter) {}
-	fn ui(&mut self, _: &mut Ui, _: std::option::Option<Area>) -> Response { Response::default() }
+	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response { ui.response(area.unwrap_or_default()) }
 }
 
 /// a single line to input.
@@ -370,27 +371,37 @@ pub struct SingleTextInput<'a> {
 	limit: Option<usize>,
 }
 
+/// a simple slider
 pub struct Slider<'a, T: Num> {
 	input: &'a mut T,
 	from: T,
 	to: T,
-	step: T,
+	step: f64,
 	is_logarithmic: bool,
 	width: f32,
-	speed: T,
+	speed: f64,
 	text: Text,
 	prefix: String,
 	suffix: String,
 }
 
+/// a value can be draggable. TODO: text input
 pub struct DragableValue<'a, T: Num> {
 	input: &'a mut T,
-	step: T,
-	speed: T,
+	step: f64,
+	speed: f64,
 	text: Text,
 	prefix: String,
 	suffix: String,
 	non_negative: bool
+}
+
+/// easy as it should be
+pub struct DivideLine {
+	is_horizental: bool,
+	// to lazy to white a new enum to represent align....
+	// None for center, true for left/top, false for right/bottom
+	centered: Option<bool>
 }
 
 imply_text_trait!(SingleTextInput<'_>);

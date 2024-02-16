@@ -10,7 +10,7 @@ impl Widget for Canvas {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
 		self.painter.change_layer(painter.style().layer);
 		self.painter.move_delta_to(response.area.left_top());
-		self.painter.change_clip(ui.window_area());
+		self.painter.change_clip(ui.window_crossed().shrink(Vec2::same(ui.style().space)).cross_part(&response.area));
 		*painter = self.painter.clone();
 	}
 

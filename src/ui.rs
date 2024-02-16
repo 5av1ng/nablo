@@ -56,38 +56,40 @@ impl Default for Ui {
 			output_events: vec!(),
 			texture_id: vec!(),
 			offset: Vec2::ZERO,
-			parent_area: None
+			parent_area: None,
+			start_position: Vec2::ZERO,
+			window_crossed: Area::new_with_origin([640.0,480.0].into()),
 		}
 	}
 }
 
 impl Ui {
 	/// add a widget
-	pub fn add(&mut self, widget: impl Widget) -> &Response {
+	pub fn add(&mut self, widget: impl Widget) -> Response {
 		let id = self.available_id();
 		self.add_with_id(id, widget)
 	}
 
 	/// add a widget with id
-	pub(crate) fn add_with_id(&mut self, id: String, mut widget: impl Widget) -> &Response {
+	pub(crate) fn add_with_id(&mut self, id: String, mut widget: impl Widget) -> Response {
 		let response = widget.ui(self, None);
 		self.add_widget(id, widget, response)
 	}
 
 	/// put a widget
-	pub fn put(&mut self, widget: impl Widget, area: Area) -> &Response {
+	pub fn put(&mut self, widget: impl Widget, area: Area) -> Response {
 		let id = self.available_id();
 		self.put_with_id(id, widget, area)
 	}
 
 	/// put a widget with id
-	pub(crate) fn put_with_id(&mut self, id: String, mut widget: impl Widget, area: Area) -> &Response {
+	pub(crate) fn put_with_id(&mut self, id: String, mut widget: impl Widget, area: Area) -> Response {
 		let response = widget.ui(self, Some(area));
 		self.add_widget(id, widget, response)
 	}
 
 	/// add a widget with exist response.
-	pub fn add_widget(&mut self, id: String, mut widget: impl Widget, response: Response) -> &Response {
+	pub fn add_widget(&mut self, id: String, mut widget: impl Widget, response: Response) -> Response {
 		let mut response = response;
 		self.memory_clip.push(id.clone());
 		self.memory_clip_total.push(id.clone());
@@ -98,29 +100,57 @@ impl Ui {
 			response.read(&t.response.metadata);
 			response.area = area;
 			t.response = response.clone();
+			t.update_area = area.cross_part(&self.window_crossed);
 			let mut shapes = self.painter();
 			widget.draw(self, &response, &mut shapes);
 			self.shape.append(shapes);
 		}else {
 			self.memory.insert(id.clone(), MemoryTemp {
+				update_area: response.area.cross_part(&self.window_crossed),
 				response,
-				access_time: 1
+				access_time: 1,
 			});
 		};
-		&self.memory.get(&id).unwrap().response
+		self.memory.get(&id).unwrap().response.clone()
+	}
+
+	pub fn container_id<C: Container>(&mut self, container: &C) -> String {
+		let id = container.get_id(self);
+		let mut index = 0;
+		let available_id: Vec<_> = self.available_id.0.split("||").collect();
+		for (i, a) in available_id.iter().enumerate().rev() {
+			if String::from(*a) == id {
+				index = i;
+			}
+		}
+		let mut input_id = String::new();
+		if index == 0 {
+			return format!("{}||{}!!{}", self.available_id.0 ,id, id);
+		}
+		for i in 0..index {
+			if available_id[i].is_empty() {
+				continue;
+			}
+
+			input_id = format!("{}||{}", input_id, available_id[i]);
+		}
+		let input_id = format!("{}||{}!!{}", input_id ,id, id);
+		// let input_id = format!("{}||{}!!{}", self.available_id.0 ,id, id);
+		input_id
 	}
 
 	/// to show your container
 	pub fn show<R, C: Container>(&mut self, container: &mut C, inner_widget: impl FnOnce(&mut Ui, &mut C) -> R) -> InnerResponse<R> {
 		let id = container.get_id(self);
 		let size = container.area(self);
-		let area = size.cross_part(&self.window);
+		let area = size.cross_part(&self.window_crossed);
 		let layer = container.layer(self);
 		let shapes_len = self.shape.raw_shape.len();
 		let mut painter = Painter::from_area(&area);
 		painter.set_layer(layer); 
-		let response = self.response_update(size, id.clone()).clone();
-		let if_show = container.begin(self, &mut painter, &response);
+		let input_id = format!("{}||{}!!{}",self.available_id.0 ,id, id);
+		let response = self.response_update(size, input_id.clone());
+		let if_show = container.begin(self, &mut painter, &response, &input_id);
 		let style = painter.style().clone();
 		let offset = painter.offset;
 		self.shape.append(painter);
@@ -131,7 +161,7 @@ impl Ui {
 			};
 			let split = self.shape.raw_shape.split_off(shapes_len);
 			let mut painter = Painter::new(&size, split, style);
-			container.end(self, &mut painter, &return_value);
+			container.end(self, &mut painter, &return_value, &input_id);
 			self.shape.append(painter);
 			return_value
 		}else {
@@ -156,7 +186,7 @@ impl Ui {
 	}
 
 	/// add a response area to ui, and add a update task before next frame
-	pub fn response_update(&mut self, area: Area, id: String) -> &Response {
+	pub fn response_update(&mut self, area: Area, id: String) -> Response {
 		let response = self.response(area);
 		self.add_widget(id, Empty{} , response)
 	}
@@ -174,9 +204,9 @@ impl Ui {
 	/// the way you paint stuff in `nablo`, note: actually you cant use this to paint something...
 	pub fn painter(&self) -> Painter {
 		let area = if let Some(t) = self.parent_area {
-			self.window.cross_part(&t)
+			self.window_crossed.cross_part(&t)
 		}else {
-			self.window
+			self.window_crossed
 		};
 		let mut back = Painter::from_area(&area);
 		*back.style_mut() = self.paint_style.clone();
@@ -218,6 +248,11 @@ impl Ui {
 		&mut self.paint_style
 	}
 
+	/// get start position, useful while writing chart
+	pub fn start_position(&self) -> Vec2 {
+		self.start_position
+	}
+
 	/// save someting in `nablo` memory, *dont* save your data in there. This should be designed to save all kinds of datas....
 	/// but i dont find better ways.
 	/// too bad!
@@ -253,6 +288,11 @@ impl Ui {
 		self.language = language;
 	}
 
+	/// the window can be seen
+	pub fn window_crossed(&self) -> Area {
+		self.window_crossed
+	}
+
 	/// to get a sub reigon of current window, usually used in [`crate::Container`], returns all inner element's [`crate::Response`] and a empty [`crate::Response`].
 	pub fn sub_ui<R, C: Container>(&mut self, area: Area, id: String, paint_style: PaintStyle, offset: Vec2, container: &mut C ,widgets: impl FnOnce(&mut Ui, &mut C) -> R) -> InnerResponse<R> {
 		let id = format!("{}||{}",self.available_id.0 ,id);
@@ -261,7 +301,9 @@ impl Ui {
 			memory_clip: self.memory_clip.clone(),
 			memory_clip_total: self.memory_clip_total.clone(),
 			available_position: area.left_top() + Vec2::same(self.style.space) + offset,
-			window: self.window.cross_part(&area),
+			start_position: area.left_top() + offset,
+			window_crossed: self.window_crossed.cross_part(&area),
+			window: area,
 			style: self.style.clone(),
 			last_frame: self.last_frame,
 			events: self.events.clone(),
@@ -279,7 +321,7 @@ impl Ui {
 			if utf8_slice::len(&key) < utf8_slice::len(&id) {
 				None
 			}else {
-				if utf8_slice::till(&key, utf8_slice::len(&id)) == id {
+				if (utf8_slice::till(&key, utf8_slice::len(&id)) == id) && (!(utf8_slice::from(&key, utf8_slice::len(&id)).contains("||")) || utf8_slice::from(&key, utf8_slice::len(&id)).split("||").count() == 2) {
 					Some(response.response.clone())
 				}else {
 					None
@@ -376,7 +418,8 @@ impl Ui {
 				self.input_state.click_time.remove(button);
 			},
 			Event::Resized(size) => {
-				self.window = Area::new_with_origin(*size)
+				self.window = Area::new_with_origin(*size);
+				self.window_crossed = Area::new_with_origin(*size);
 			}
 			Event::TextInput(text) => {
 				self.input_state.input_text = text.to_string();
@@ -388,10 +431,10 @@ impl Ui {
 				self.input_state.touch.insert(touch.id, (touch.clone(), false));
 			}
 			Event::TouchEnd(touch) => {
-				self.input_state.touch.remove(&touch.id);
+				self.input_state.touch.insert(touch.id, (touch.clone(), false));
 			}
 			Event::TouchCancel(touch) => {
-				self.input_state.touch.remove(&touch.id);
+				self.input_state.touch.insert(touch.id, (touch.clone(), false));
 			},
 			Event::Scroll(scroll) => self.input_state.current_scroll = *scroll,
 			Event::ImeEnable => self.input_state.is_ime_on = true,
@@ -470,8 +513,8 @@ impl Ui {
 			}
 		}
 		let mut update = |input: &mut Vec<(String, MemoryTemp)>| {
-			for (id ,res) in input {
-				res.response.metadata.update(&mut self.input_state, &res.response.area);
+			for (id, res) in input {
+				res.response.metadata.update(&mut self.input_state, &res.update_area);
 				// println!("{}", res.response.id);
 				self.memory.insert(id.to_string(), res.clone());
 			}
@@ -619,37 +662,42 @@ impl Ui {
 	/// # widgets shortcuts
 
 	/// add a [`crate::widgets::Label`].
-	pub fn label(&mut self, text: impl Into<Text>) -> &Response {
+	pub fn label(&mut self, text: impl Into<Text>) -> Response {
 		self.add(Label::new(text))
 	}
 
 	/// add a [`crate::widgets::Button`].
-	pub fn button(&mut self, text: impl Into<Text>) -> &Response {
+	pub fn button(&mut self, text: impl Into<Text>) -> Response {
 		self.add(Button::new(text))
 	}
 
+	/// add a [`crate::widgets::DivideLine`]
+	pub fn divide_line(&mut self) -> Response {
+		self.add(DivideLine::new())
+	}
+
 	/// add a [`crate::widgets::Canvas`].
-	pub fn canvas<P: FnOnce(&mut Painter)>(&mut self, width_and_height: Vec2, paint: P) -> &Response {
+	pub fn canvas<P: FnOnce(&mut Painter)>(&mut self, width_and_height: Vec2, paint: P) -> Response {
 		self.add(Canvas::new(width_and_height, paint))
 	}
 
 	/// add a [`crate::widgets::DragableValue`].
-	pub fn dragable_value<'a, T: Num>(&mut self, input: &'a mut T) -> &Response {
+	pub fn dragable_value<'a, T: Num>(&mut self, input: &'a mut T) -> Response {
 		self.add(DragableValue::new(input))
 	}
 
 	/// add a [`crate::widgets::Slider`].
-	pub fn slider<'a, T: Num>(&mut self, range: RangeInclusive<T> ,input: &'a mut T) -> &Response {
-		self.add(Slider::new(range, input))
+	pub fn slider<'a, T: Num>(&mut self, range: RangeInclusive<T> ,input: &'a mut T, text: impl Into<Text>) -> Response {
+		self.add(Slider::new(range, input, text))
 	}
 
 	/// add a [`crate::widgets::SingleTextInput`].
-	pub fn single_input<'a>(&mut self, input: &'a mut String) -> &Response {
-		self.add(SingleTextInput::new(input))
+	pub fn single_input<'a>(&mut self, input: &'a mut String) -> Response {
+		self.add(SingleTextInput::new(input).set_width(180.0))
 	}
 
 	/// add a [`crate::widgets::SelectableValue`].
-	pub fn switch(&mut self, select: &mut bool, text: impl Into<Text>) -> &Response {
+	pub fn switch(&mut self, select: &mut bool, text: impl Into<Text>) -> Response {
 		let res = self.add(SelectableValue::new(*select, text));
 		if res.is_clicked() {
 			*select = !*select
@@ -658,7 +706,7 @@ impl Ui {
 	}
 
 	/// add a [`crate::widgets::SelectableValue`].
-	pub fn selectable_value<T: Eq>(&mut self, input: &mut T, select: T, text: impl Into<Text>) -> &Response {
+	pub fn selectable_value<T: PartialEq>(&mut self, input: &mut T, select: T, text: impl Into<Text>) -> Response {
 		let mut select = select;
 		let res = self.add(SelectableValue::new(input == &mut select, text));
 		if res.is_clicked() {
@@ -673,7 +721,7 @@ impl Ui {
 
 	/// add a [`crate::container::Card`]
 	pub fn card<R>(&mut self, id: impl Into<String>, width_and_height: Vec2, inner_widget: impl FnOnce(&mut Ui, &mut Card) -> R) -> InnerResponse<R> {
-		self.show(&mut Card::new(id).set_width(width_and_height.x).set_height(width_and_height.y).set_scrollable([true; 2]), inner_widget)
+		self.show(&mut Card::new(id).set_color([0,0,0,0]).set_width(width_and_height.x).set_height(width_and_height.y).set_scrollable([true; 2]), inner_widget)
 	}
 
 	/// add a [`crate::container::Card`] with dragable on, can be a simulate to window

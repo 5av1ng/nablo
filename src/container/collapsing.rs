@@ -47,7 +47,7 @@ impl Collapsing {
 
 	/// set current open state for a collapsing.
 	pub fn open(&self, is_open: bool, ui: &mut Ui) {
-		let id = self.get_id(ui);
+		let id = ui.container_id(self);
 		let temp = CollapsingTemp {
 			is_open,
 			..ui.memory_read(&id).unwrap_or(CollapsingTemp::default())
@@ -58,7 +58,7 @@ impl Collapsing {
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
 struct CollapsingTemp {
-	area: Area,
+	area: Vec2,
 	is_open: bool,
 	change_time: Vec<Instant>
 }
@@ -69,7 +69,7 @@ impl Container for Collapsing {
 	}
 
 	fn area(&self, ui: &mut Ui) -> Area {
-		let id = self.get_id(ui);
+		let id = ui.container_id(self);
 		let mut painter = ui.painter();
 		let text_area = self.text_area(&mut painter);
 		let icon_area = if let Some(t) = &self.icon {
@@ -79,26 +79,26 @@ impl Container for Collapsing {
 		};
 		let width_and_height = Vec2::new(text_area.width_and_height().x + icon_area.width_and_height().x, 
 			*[text_area.width_and_height().y, icon_area.width_and_height().y, ui.style().space].iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap());
-		let mut area = Area::new(ui.available_position(), ui.available_position() + width_and_height);
-		let area = if let Some(temp) = ui.memory_read::<CollapsingTemp>(&id) {
+		let width_and_height = if let Some(temp) = ui.memory_read::<CollapsingTemp>(&id) {
 			if temp.is_open {
-				area.combine(&temp.area);
+				width_and_height + temp.area
+			}else {
+				width_and_height
 			}
-			area
 		}else {
-			area
+			width_and_height
 		};
-		Area::new(ui.available_position(), ui.available_position() + area.width_and_height() + Vec2::same(ui.style().space))
+		
+		Area::new(ui.available_position(), ui.available_position() + width_and_height + Vec2::same(ui.style().space))
 	}
 
 	fn layer(&self, ui: &mut Ui) -> Layer {
 		ui.painter().style().layer
 	}
 
-	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response) -> bool {
+	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &String) -> bool {
 		// logic
-		let id = self.get_id(ui);
-		let mut temp: CollapsingTemp = ui.memory_read(&id).unwrap_or(CollapsingTemp{
+		let mut temp: CollapsingTemp = ui.memory_read(id).unwrap_or(CollapsingTemp{
 			is_open: self.default_open,
 			..Default::default()
 		});
@@ -122,7 +122,7 @@ impl Container for Collapsing {
 		if temp.change_time.len() > 2 {
 			temp.change_time.remove(0);
 		}
-		ui.memory_save(&id, &temp);
+		ui.memory_save(id, &temp);
 
 		// animation caculate
 		let animation_time = Duration::milliseconds(150);
@@ -178,9 +178,8 @@ impl Container for Collapsing {
 		temp.is_open
 	}
 
-	fn end<R>(&mut self, ui: &mut Ui, _: &mut Painter, inner_response: &InnerResponse<R>) {
-		let id = self.get_id(ui);
-		let mut temp: CollapsingTemp = ui.memory_read(&id).unwrap();
+	fn end<R>(&mut self, ui: &mut Ui, _: &mut Painter, inner_response: &InnerResponse<R>, id: &String) {
+		let mut temp: CollapsingTemp = ui.memory_read(id).unwrap();
 		if temp.is_open {
 			let mut area = Area::ZERO;
 			for res in &inner_response.inner_responses {
@@ -188,10 +187,10 @@ impl Container for Collapsing {
 					area.combine(&res.area);
 				}
 			}
-			temp.area = area;
+			temp.area = area.width_and_height();
 		}else {
-			temp.area = Area::ZERO
+			temp.area = Vec2::ZERO
 		}
-		ui.memory_save(&id, temp);
+		ui.memory_save(id, temp);
 	}
 }

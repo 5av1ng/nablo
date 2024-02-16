@@ -1,21 +1,6 @@
-use crate::Ui;
-use crate::ManagerBuilder;
-use baseview::WindowHandle;
-use raw_window_handle::HasRawWindowHandle;
-use baseview::Size;
-use baseview::WindowScalePolicy;
-use baseview::WindowOpenOptions;
-use crate::Event;
-use baseview::Event as BaseviewEvent;
-use baseview::EventStatus;
-use baseview::WindowHandler;
-use baseview::Window;
-use nablo_shape::prelude::Vec2;
-use clipboard::ClipboardProvider;
 use crate::PASSWORD;
 use sw_composite::muldiv255;
 use fontdue::Font;
-use crate::OutputEvent;
 use crate::texture::create_texture;
 use wgpu::util::DeviceExt;
 use nablo_shape::shape::shape_elements::Shape;
@@ -29,19 +14,34 @@ use euclid::Angle;
 use euclid::Vector2D;
 use euclid::Transform2D;
 use nablo_shape::prelude::shape_elements::Style;
-use nablo_shape::prelude::ShapeElement;use crate::integrator::ShapeOutput;
+use nablo_shape::prelude::ShapeElement;
+use crate::integrator::ShapeOutput;
 use crate::integrator::Output;
-use crate::Integrator;
 use wgpu::include_wgsl;
 use std::iter;
-use crate::Manager;
-use crate::App;
-use crate::Settings;
+use nablo_shape::math::Vec2;
+use winit::window::Window;
 use pollster::FutureExt as _;
 use raqote::*;
 use anyhow::*;
 use crate::texture::Image as NabloImage;
 use rayon::prelude::*;
+
+/// a struct for using wgpu
+pub(crate) struct State {
+	pub surface: wgpu::Surface,
+	pub device: wgpu::Device,
+	pub queue: wgpu::Queue,
+	pub config: wgpu::SurfaceConfiguration,
+	pub size: Vec2,
+	pub render_pipeline: wgpu::RenderPipeline,
+	pub diffuse_texture: wgpu::Texture,
+	pub diffuse_bind_group: wgpu::BindGroup,
+	pub vertex_buffer: wgpu::Buffer,
+	pub index_buffer: wgpu::Buffer,
+	pub shader: wgpu::ShaderModule,
+}
+
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -64,145 +64,16 @@ const INDICES: &[u32] = &[
 
 const MOVE_DOWN_LETTER: [char; 36] = ['a','c','e','g','m','n','o','p','q','r','s','u','v','w','x','y','z','α','γ','ε','η','ι','κ','μ','ν','ο','π','ρ','σ','τ','υ','χ','ω','>','<','~'];
 
-/// a struct for using wgpu
-pub(crate) struct State {
-	surface: wgpu::Surface,
-	device: wgpu::Device,
-	queue: wgpu::Queue,
-	config: wgpu::SurfaceConfiguration,
-	size: Vec2,
-	render_pipeline: wgpu::RenderPipeline,
-	diffuse_texture: wgpu::Texture,
-	diffuse_bind_group: wgpu::BindGroup,
-	vertex_buffer: wgpu::Buffer,
-	index_buffer: wgpu::Buffer,
-	shader: wgpu::ShaderModule,
-	fonts: Font,
-}
-
-impl<T: App + Send + 'static> WindowHandler for Manager<T> {
-	fn on_frame(&mut self, _: &mut Window) {
-		let output = self.integrator.frame(vec!(), |ui| self.app.app(ui));
-		match self.state.render(&output, &self.image_memory) {
-			Ok(_) => {}
-			Err(wgpu::SurfaceError::Lost) => self.state.resize(self.state.size),
-			Err(e) => eprintln!("{:?}", e),
-		};
-		for event in output.output_events {
-			self.handle_event(event)
-		}
-	}
-
-	fn on_event(&mut self, _: &mut Window<'_>, event: BaseviewEvent) -> EventStatus {
-		let event: Event = event.into();
-		if let Event::Resized(inner) = event {
-			self.state.resize(inner)
-		}
-		self.integrator.event(&event);
-		EventStatus::Captured
-	}
-}
-
-impl<T: App + Send + 'static> ManagerBuilder<T> {
-	/// see more in baseview documentationg
-	pub fn open_blocking(self){
-		Window::open_blocking(WindowOpenOptions {
-			title: self.settings.title.clone(),
-			size: Size { width: self.settings.size.x as f64, height: self.settings.size.y as f64 },
-			scale: WindowScalePolicy::SystemScaleFactor,
-			gl_config: None
-		}, |window| Manager::new(window, self));
-	}
-
-	/// see more in baseview documentationg
-	pub fn open_parented<P>(parent: &P, settings: Settings, app: T) -> WindowHandle where 
-		P: HasRawWindowHandle
-	{
-		Window::open_parented(parent, WindowOpenOptions {
-			title: settings.title.clone(),
-			size: Size { width: settings.size.x as f64, height: settings.size.y as f64 },
-			scale: WindowScalePolicy::SystemScaleFactor,
-			gl_config: None
-		}, |window| Manager::new(window, Self::new(settings, app)))
-	}
-
-	/// create a new manager builder
-	pub fn new(settings: Settings, app: T) -> Self {
-		Self {
-			settings,
-			app
-		}
-	}
-}
-
-impl<T> ManagerBuilder<T> where 
-	T: Fn(&mut Ui) + Send + Sync
-{
-	/// create a new manager builder with closure
-	pub fn new_closure(settings: Settings, app: T) -> Self {
-		Self {
-			settings,
-			app: app
-		}
-	}
-}
-
-impl<T: App + Send + 'static> Manager<T> {
-	/// create a manager for your app
-	fn new(window: &Window, builder: ManagerBuilder<T>) -> Self {
-		let clipboard = match ClipboardProvider::new() {
-			Ok(t) => Some(t),
-			Err(_) => {
-				#[cfg(feature = "info")]
-				println!("initlizing clipboard failed, will not using clipboard...");
-				#[cfg(feature = "log")]
-				log::warn!("initlizing clipboard failed, will not using clipboard...");
-				None
-			}
-		};
-		let state = State::new(window, &builder.settings);
-		let mut integrator = Integrator::default();
-		integrator.event(&Event::Resized(builder.settings.size));
-		Self {
-			settings: Settings::default(),
-			integrator,
-			image_memory: HashMap::new(),
-			app: builder.app,
-			clipboard,
-			state,
-		}
-	}
-
-	fn handle_event(&mut self, event: OutputEvent) {
-		match event {
-			OutputEvent::TextureCreate(texture) => {
-				self.image_memory.insert(texture.id.clone(), texture);
-			},
-			OutputEvent::TextureChange(texture) => {
-				self.image_memory.insert(texture.id.clone(), texture);
-			},
-			OutputEvent::TextureDelete(id) => {
-				self.image_memory.remove(&id);
-			},
-			OutputEvent::ClipboardCopy(text) => {
-				if let Some(clipboard) = &mut self.clipboard {
-					let data = clipboard.set_contents(text);
-					if let Err(e) = data {
-						#[cfg(feature = "info")]
-						println!("get clipboard info failed, info: {}", e);
-						#[cfg(feature = "log")]
-						log::error!("get clipboard info failed, info: {}", e);
-					};
-				}
-			},
-			OutputEvent::RequireSoftKeyboard(_) => {},
-		}
-	}
-}
-
 impl State {
-	fn new(window: &Window, settings: &Settings) -> Self {
-		let size  = settings.size;
+	pub(crate) fn new(window: &Window) -> Self {
+		let mut size = Vec2::new(window.inner_size().width as f32, window.inner_size().height as f32);
+		if size.x == 0.0{
+			size.x = 640.0
+		}
+		if size.y == 0.0 {
+			size.y = 480.0
+		}
+
 		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
 			backends: wgpu::Backends::all(),
 			..Default::default()
@@ -240,7 +111,7 @@ impl State {
 
 		let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-		let (diffuse_texture,texture_bind_group_layout , diffuse_bind_group) = create_texture(size, &device, &queue);
+		let (diffuse_texture,texture_bind_group_layout , diffuse_bind_group) = create_texture([size.x, size.y].into(), &device, &queue);
 
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Render Pipeline Layout"),
@@ -299,15 +170,6 @@ impl State {
 			}
 		);
 
-		fn font(input: &[u8]) -> Result<Font> {
-			match fontdue::Font::from_bytes(input, fontdue::FontSettings::default()) {
-				Ok(t) => Ok(t),
-				Err(e) => return Err(anyhow!("{}", e)),
-			}
-		}
-		let font_1 = font(include_bytes!("../font_normal.ttf") as &[u8]).expect("font load error...");
-		let fonts = font_1;
-
 		Self {
 			surface,
 			device,
@@ -320,16 +182,15 @@ impl State {
 			vertex_buffer,
 			index_buffer,
 			shader,
-			fonts,
 		}
 	}
 
-	fn resize(&mut self, new_size: Vec2) {
+	pub(crate) fn resize(&mut self, new_size: Vec2) {
 		if new_size.x > 0.0 && new_size.y > 0.0 {
 			self.size = new_size;
 			self.config.width = new_size.x as u32;
 			self.config.height = new_size.y as u32;
-			let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture(new_size, &self.device, &self.queue);
+			let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture([new_size.x, new_size.y].into() , &self.device, &self.queue);
 			self.diffuse_texture = diffuse_texture;
 			self.diffuse_bind_group = diffuse_bind_group;
 			let render_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -376,10 +237,21 @@ impl State {
 		}
 	}
 
-	fn render(&mut self, input: &Output<ShapeOutput>, image_memory: &HashMap<String, NabloImage>) -> Result<(), wgpu::SurfaceError> {
-		let fonts = &self.fonts;
-		let binding = draw(&input.shapes, self.size, fonts, image_memory);
-		let shapes = binding.get_data_u8();
+	pub(crate) fn render(&mut self, input: &Output<ShapeOutput>, font: &[Font; 4], image_memory: &HashMap<String, NabloImage>) -> Result<(), wgpu::SurfaceError> {
+		cfg_if::cfg_if! {
+			if #[cfg(target_arch = "wasm32")] {
+				let mut binding = draw(&input.shapes, self.size, font, image_memory);
+				let shapes = binding.get_data_u8_mut();
+				shapes.par_chunks_mut(4).for_each(|inside| {
+					let temp = inside[0];
+					inside[0] = inside[2];
+					inside[2] = temp;
+				});
+			}else {
+				let binding = draw(&input.shapes, self.size, font, image_memory);
+				let shapes = binding.get_data_u8();
+			}
+		} 
 
 		let output = self.surface.get_current_texture()?;
 		let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -436,7 +308,7 @@ impl State {
 	}
 }
 
-fn draw(input: &ShapeOutput, window_size: Vec2, font: &Font, image_memory: &HashMap<String, NabloImage>) -> DrawTarget {
+fn draw(input: &ShapeOutput, window_size: Vec2, font: &[Font; 4], image_memory: &HashMap<String, NabloImage>) -> DrawTarget {
 	let mut dt = DrawTarget::new(window_size.x as i32, window_size.y as i32);
 	for shape in &input.shapes {
 		handle_shape(&mut dt, &shape.shape, &shape.style, font, image_memory);
@@ -444,7 +316,7 @@ fn draw(input: &ShapeOutput, window_size: Vec2, font: &Font, image_memory: &Hash
 	dt
 }
 
-fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts: &Font, image_memory: &HashMap<String, NabloImage>) {
+fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts: &[Font; 4], image_memory: &HashMap<String, NabloImage>) {
 	dt.push_clip_rect(IntRect {
 		min: euclid::Point2D::new(style.clip.area[0].x as i32, style.clip.area[0].y as i32),
 		max: euclid::Point2D::new(style.clip.area[1].x as i32, style.clip.area[1].y as i32)
@@ -463,10 +335,35 @@ fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts
 		let em = EM * style.size.len() / 2.0_f32.sqrt(); 
 		let mut x = style.position.x;
 		let mut line_counter = 0.0;
+		// let y_m = match fonts[0].vertical_line_metrics(em) {
+		// 	None => fonts[0].metrics('M', em).height as f32,
+		// 	Some(t) => t.new_line_size
+		// };
 		for i in 0..utf8_slice::len(&t.text) {
 			let y;
 			let width;
 			let text = utf8_slice::slice(&t.text, i, i + 1).chars().next().unwrap();
+			if text == '\n' {
+				line_counter = line_counter + 1.0;
+				x = style.position.x;
+				continue;
+			}
+			let (metrics, bitmap) = if t.text_style.is_bold {
+				if t.text_style.is_italic {
+					fonts[3].rasterize(text, em)
+				}else {
+					fonts[1].rasterize(text, em)
+				}
+			}else {
+				if t.text_style.is_italic {
+					fonts[2].rasterize(text, em)
+				}else {
+					fonts[0].rasterize(text, em)
+				}
+			};
+			// width = metrics.width as f32;
+			// y = metrics.ymin as f32 + line_counter * em + style.position.y;
+			// println!("x: {}, y: {}", x, y);
 			if (text >= '一' && text <= '龥') || text == PASSWORD  {
 				width = em * 0.8 * 1.5;
 				y = style.position.y + line_counter * em;
@@ -490,20 +387,6 @@ fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts
 					style.position.y
 				} + line_counter * em;
 			}
-			// let (metrics, bitmap) = if t.text_style.is_bold {
-			// 	if t.text_style.is_italic {
-			// 		fonts[3].rasterize(text, em)
-			// 	}else {
-			// 		fonts[1].rasterize(text, em)
-			// 	}
-			// }else {
-			// 	if t.text_style.is_italic {
-			// 		fonts[2].rasterize(text, em)
-			// 	}else {
-			// 		fonts[0].rasterize(text, em)
-			// 	}
-			// };
-			let (metrics, bitmap) = fonts.rasterize(text, em);
 			let data: Vec<u32> = bitmap.into_par_iter().map(|input| {
 				let input = (input as f32 * style.fill[3] as f32 / 255.0) as u8;
 				if input == 0 {
@@ -545,7 +428,7 @@ fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts
 			let transform = Transform2D::identity()
 				.then_translate(Vector::new(style.transform_origin.x, style.transform_origin.y))
 				.then_rotate(Angle { radians: style.rotate })
-				.then_scale(1.0 / style.size.x, 1.0 / style.size.y)
+				.then_scale(style.size.x, style.size.y)
 				.then_translate(Vector::new(-style.transform_origin.x, -style.transform_origin.y))
 				.then_translate(Vector2D::new(-style.position.x, -style.position.y))
 				.then_scale(t.size.x / image.size.x, t.size.y / image.size.y);
@@ -568,15 +451,14 @@ fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts
 }
 
 fn parse_shape(input: &ShapeMask, transform: &Transform) -> Path {
+	let mut pb = PathBuilder::new();
 	match input {
 		ShapeMask::Circle(cir) => {
-			let mut pb = PathBuilder::new();
 			pb.arc(cir.radius, cir.radius, cir.radius, 0.0, 2.0 * PI);
 			pb.close();
 			pb.finish()
 		},
 		ShapeMask::Rect(rect) => {
-			let mut pb = PathBuilder::new();
 			if rect.rounding == Vec2::ZERO {
 				pb.rect(0.0, 0.0, rect.width_and_height.x, rect.width_and_height.y);
 			}else {
@@ -606,14 +488,14 @@ fn parse_shape(input: &ShapeMask, transform: &Transform) -> Path {
 			pb.finish()
 		},
 		ShapeMask::CubicBezier(cb) => {
-			let mut pb = PathBuilder::new();
 			pb.move_to(cb.points[0].x, cb.points[0].y);
 			pb.cubic_to(cb.points[1].x, cb.points[1].y, cb.points[2].x, cb.points[2].y, cb.points[3].x, cb.points[3].y);
-			pb.close();
+			if cb.if_close {
+				pb.close();
+			}
 			pb.finish()
 		},
 		ShapeMask::Polygon(polygon) => {
-			let mut pb = PathBuilder::new();
 			for point in polygon.clone().into_iter() {
 				pb.line_to(point.x, point.y);
 			}
@@ -621,17 +503,16 @@ fn parse_shape(input: &ShapeMask, transform: &Transform) -> Path {
 			pb.close();
 			pb.finish()
 		},
+		ShapeMask::Line(pt) => {
+			let angle = pt.angle();
+			let points = [Vec2::polar(2.0, angle + PI / 2.0), Vec2::polar(2.0, angle - PI / 2.0), Vec2::polar(2.0, angle - PI / 2.0) + *pt, Vec2::polar(2.0, angle + PI / 2.0) + *pt, Vec2::polar(2.0, angle + PI / 2.0)];
+			for point in points {
+				pb.line_to(point.x, point.y);
+			}
+			pb.close();
+			pb.finish()
+		},
 	}.transform(&transform)
-}
-
-impl Default for Settings {
-	fn default() -> Self {
-		Self {
-			max_clicks: 5,
-			size: Vec2::new(640.0,480.0),
-			title: String::from("nablo"),
-		}
-	}
 }
 
 fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {

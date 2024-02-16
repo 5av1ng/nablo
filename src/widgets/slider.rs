@@ -16,16 +16,16 @@ use crate::prelude::Slider;
 
 impl<'a, T: Num> Slider<'a, T> {
 	/// get a slider with text
-	pub fn new(range: RangeInclusive<T> ,input: &'a mut T) -> Self {
+	pub fn new(range: RangeInclusive<T> ,input: &'a mut T, text: impl Into<Text>) -> Self {
 		Self {
-			text: "".into(),
+			text: text.into(),
 			input,
 			from: range.start().clone(),
 			to: range.end().clone(),
-			step: T::from_f64(1.0),
+			step: 1.0,
 			is_logarithmic: false,
 			prefix: "".into(),
-			speed: T::from_f64(1.0),
+			speed: 1.0,
 			suffix: "".into(),
 			width: 100.0,
 		}
@@ -40,7 +40,7 @@ impl<'a, T: Num> Slider<'a, T> {
 	}
 
 	/// set speed to slider
-	pub fn speed(self, speed: T) -> Self {
+	pub fn speed(self, speed: f64) -> Self {
 		Self {
 			speed,
 			..self
@@ -48,7 +48,7 @@ impl<'a, T: Num> Slider<'a, T> {
 	}
 
 	/// set step to slider
-	pub fn step(self, step: T) -> Self {
+	pub fn step(self, step: f64) -> Self {
 		Self {
 			step,
 			..self
@@ -89,11 +89,6 @@ impl<'a, T: Num> Slider<'a, T> {
 	}
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct SliderTemp {
-	last_position: Option<Vec2>
-}
-
 impl<T: Num> Widget for Slider<'_, T> {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
 		// logic
@@ -110,25 +105,14 @@ impl<T: Num> Widget for Slider<'_, T> {
 				input
 			}
 		};
-		let mut temp: SliderTemp = if let Some(t) = ui.memory_read(&response.id) {
-			t
+		let drag_delta = response.drag_delta().x;
+		let input = if self.is_logarithmic {
+			((drag_delta / self.width) as f64 * speed * (to.ln() - from.ln()) + self.input.to_f64().ln()).exp()
 		}else {
-			SliderTemp::default()
+			let change = (drag_delta / self.width) as f64 * speed * (to - from);
+			((self.input.to_f64() + change) / step).round() * step
 		};
-		if let Some(t) = response.drag() {
-			if let Some(l) = temp.last_position {
-				let change = if self.is_logarithmic {
-					// todo
-					- ((t.x - l.x) / self.width) as f64 * speed * (from - to)
-				}else {
-					- ((t.x - l.x) / self.width) as f64 * speed * (from - to)
-				};
-				let input = ((self.input.to_f64() + change) / step).round() * step;
-				*self.input = T::from_f64(compress(input));
-			}
-		}
-		temp.last_position = response.drag();
-		ui.memory_save(&response.id, temp);
+		*self.input = T::from_f64(compress(input));
 
 		// animation caculate
 		let animation_time = Duration::milliseconds(250);
@@ -154,14 +138,18 @@ impl<T: Num> Widget for Slider<'_, T> {
 		let background_color = ui.style().background_color.brighter(0.15);
 		let text_area = self.text.text_area(painter);
 
-		let inner_f64 = if self.input.to_f64() > to {
+		let inner_f64 = (if self.input.to_f64() > to {
 			to
 		}else if self.input.to_f64() < from {
 			from
 		}else {
 			self.input.to_f64()
-		};
-		let cir_x = ((inner_f64 - from) / (to - from)) as f32 * self.width + text_area.width() + ui.style().space - 8.0;
+		} / step).round() * step;
+		let cir_x = if self.is_logarithmic {
+			((inner_f64.ln() - from.ln()) / (to.ln() - from.ln())) as f32
+		}else {
+			((inner_f64 - from) / (to - from)) as f32
+		} * self.width + text_area.width() + ui.style().space - 8.0;
 		let cir_y = (response.area.height() - 16.0) / 2.0;
 		painter.set_position(origin + Vec2::new(text_area.width() + ui.style().space, cir_y + 4.0));
 		painter.set_color(background_color);
@@ -186,7 +174,17 @@ impl<T: Num> Widget for Slider<'_, T> {
 			return ui.response(area);
 		}
 		let mut painter = ui.painter();
-		let input_text: Text = format!("{}{}{}", self.prefix, self.input.to_f64(), self.suffix).into();
+		let from = self.from.to_f64();
+		let to = self.to.to_f64();
+		let step = self.step.to_f64();
+		let inner_f64 = (if self.input.to_f64() > to {
+			to
+		}else if self.input.to_f64() < from {
+			from
+		}else {
+			self.input.to_f64()
+		} / step).round() * step;
+		let input_text: Text = format!("{}{}{}", self.prefix, inner_f64, self.suffix).into();
 		let input_text = input_text.text_area(&mut painter);
 		let text_area = self.text.text_area(&mut painter);
 		let width = 2.0 * ui.style().space + input_text.width() + text_area.width() + self.width;

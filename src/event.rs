@@ -69,14 +69,14 @@ pub enum Event {
 pub struct Touch {
 	/// touch id
 	pub id: usize,
-	pub location: Vec2,
+	pub position: Vec2,
 	pub phase: TouchPhase
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum TouchPhase {
 	Start,
-	Move,
+	Hold,
 	#[default] End,
 }
 
@@ -151,12 +151,12 @@ impl Into<Event> for WindowEvent {
 				}
 			},
 			Self::Touch(touch) => {
-				let location = Vec2::new(touch.location.x as f32, touch.location.y as f32);
+				let position = Vec2::new(touch.location.x as f32, touch.location.y as f32);
 				let id = touch.id as usize;
 				match touch.phase {
-					winit::event::TouchPhase::Started => Event::TouchStart(Touch {location, id, phase: TouchPhase::Start} ),
-					winit::event::TouchPhase::Moved => Event::TouchStart(Touch {location, id, phase: TouchPhase::Move} ),
-					winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => Event::TouchStart(Touch {location, id, phase: TouchPhase::End} ),
+					winit::event::TouchPhase::Started => Event::TouchStart(Touch { position, id, phase: TouchPhase::Start } ),
+					winit::event::TouchPhase::Moved => Event::TouchStart(Touch { position, id, phase: TouchPhase::Hold } ),
+					winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => Event::TouchStart(Touch { position, id, phase: TouchPhase::End } ),
 				}
 			},
 			_ => { Event::NotSupported }
