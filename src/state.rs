@@ -111,7 +111,7 @@ impl State {
 
 		let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-		let (diffuse_texture,texture_bind_group_layout , diffuse_bind_group) = create_texture([size.x, size.y].into(), &device, &queue);
+		let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture([size.x, size.y].into(), &device, &queue);
 
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Render Pipeline Layout"),

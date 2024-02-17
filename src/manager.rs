@@ -24,13 +24,24 @@ use anyhow::*;
 impl<T: App> Manager<T> {
 	/// run your app
 	pub fn run(&mut self) -> Result<()> {
+		self.run_app(None)
+	}
+
+	/// run your app in given frames
+	pub fn run_limited_frames(&mut self, frame: usize) -> Result<()> {
+		self.run_app(Some(frame))
+	}
+
+	fn run_app(&mut self, frame: Option<usize>) -> Result<()> {
 		let event_loop = EventLoop::new()?;
 		let window;
 		if let Some(t) = self.settings.size {
 			window = WindowBuilder::new().build(&event_loop)?;
 			window.set_min_inner_size(Some(LogicalSize::new(t.x as f64, t.y as f64)));
+			self.integrator.event(&NabloEvent::Resized(t));
 		}else {
 			window = WindowBuilder::new().with_inner_size(LogicalSize::new(640.0,480.0)).build(&event_loop)?;
+			self.integrator.event(&NabloEvent::Resized(Vec2::new(640.0,480.0)));
 		}
 		window.set_title(&self.settings.title);
 		window.set_resizable(self.settings.resizeable);
@@ -87,6 +98,7 @@ impl<T: App> Manager<T> {
 		}
 		let mut state = State::new(&window);
 
+		let mut id = 1;
 		event_loop.run(move |winit_event, elwt| {
 			match winit_event {
 				Event::WindowEvent {
@@ -123,6 +135,12 @@ impl<T: App> Manager<T> {
 								for event in output.output_events {
 									self.handle_event(event)
 								}
+								if let Some(inner) = frame {
+									if id > inner {
+										elwt.exit();
+									}
+								}
+								id = id + 1;
 								window.request_redraw();
 							},
 							WindowEvent::CloseRequested => {elwt.exit()},
@@ -136,6 +154,7 @@ impl<T: App> Manager<T> {
 				_ => {}
 			}
 		})?;
+
 		Ok(())
 	}
 

@@ -476,6 +476,8 @@ impl Ui {
 		self.available_id.1 = 0;
 		self.memory_clip.clear();
 		self.output_events.clear();
+		self.paint_style = Default::default();
+		self.style = Default::default();
 		// for borrow checker
 		let mut remove_key = vec!();
 		for (key, temp) in &mut self.memory {
