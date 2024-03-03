@@ -19,7 +19,7 @@ impl Widget for Canvas {
 			Some(t) => t,
 			None => Area::new(ui.available_position(), ui.available_position() + self.width_and_height)
 		};
-		ui.response(area)
+		ui.response(area, true, false)
 	}
 }
 

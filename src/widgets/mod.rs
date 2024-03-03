@@ -356,7 +356,7 @@ pub struct Empty {}
 
 impl Widget for Empty {
 	fn draw(&mut self, _: &mut Ui, _: &Response, _: &mut Painter) {}
-	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response { ui.response(area.unwrap_or_default()) }
+	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response { ui.response(area.unwrap_or_default(), false, false) }
 }
 
 /// a single line to input.

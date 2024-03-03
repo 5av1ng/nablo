@@ -97,6 +97,6 @@ impl Widget for DivideLine {
 				}
 			}
 		};
-		ui.response(area)
+		ui.response(area, false, false)
 	}
 }

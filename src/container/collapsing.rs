@@ -193,4 +193,6 @@ impl Container for Collapsing {
 		}
 		ui.memory_save(id, temp);
 	}
+	fn is_clickable(&self, _: &mut Ui) -> bool { true }
+	fn is_dragable(&self, _: &mut Ui) -> bool { false }
 }

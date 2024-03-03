@@ -414,6 +414,6 @@ impl Widget for SingleTextInput<'_> {
 			Some(t) => t,
 			None => Area::new(ui.available_position(), ui.available_position() + Vec2::new(width, height))
 		};
-		ui.response(area)
+		ui.response(area, true, false)
 	}
 }

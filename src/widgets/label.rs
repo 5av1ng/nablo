@@ -28,6 +28,6 @@ impl Widget for Label {
 			Some(t) => t,
 			None => Area::new(ui.available_position(), ui.available_position() + text_area.width_and_height())
 		};
-		ui.response(area)
+		ui.response(area, false, false)
 	}
 }

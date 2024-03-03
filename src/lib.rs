@@ -415,9 +415,9 @@ pub(crate) struct Metadata {
 	layer: Layer,
 	create_time: Instant,
 	pointer_position: Option<Vec2>,
-	hover_info: HoverInfo,
-	click_info: ClickInfo,
-	drag_info: DragInfo,
+	hover_info: Option<HoverInfo>,
+	click_info: Option<ClickInfo>,
+	drag_info: Option<DragInfo>,
 	other_info: String,
 }
 
@@ -473,6 +473,10 @@ impl<R> From<(Response,Vec<Response> , R)> for InnerResponse<R> {
 pub trait Container {
 	/// `nablo` need a id to identify this container, Note: this is not actual id of current Container, use [`Ui::container_id()`] to get actual id
 	fn get_id(&self, ui: &mut Ui) -> String;
+	/// as name says, will not affect widgets put on it
+	fn is_clickable(&self, ui: &mut Ui) -> bool;
+	/// as name says, will not affect widgets put on it
+	fn is_dragable(&self, ui: &mut Ui) -> bool;
 	/// we must know how large this container is to show it correctly, contains where you should put your container
 	fn area(&self, ui: &mut Ui) -> Area;
 	/// `nablo` need to know which layer your need to put your widgets

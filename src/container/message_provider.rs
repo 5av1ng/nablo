@@ -160,4 +160,6 @@ impl Container for MessageProvider {
 		});
 		ui.memory_save(id, &temp);
 	}
+	fn is_clickable(&self, _: &mut Ui) -> bool { false }
+	fn is_dragable(&self, _: &mut Ui) -> bool { false }
 }

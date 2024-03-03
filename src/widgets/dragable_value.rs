@@ -139,7 +139,7 @@ impl<T: Num> Widget for DragableValue<'_, T> {
 
 	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response {
 		if let Some(area) = area {
-			return ui.response(area);
+			return ui.response(area, true, true);
 		}
 		let mut painter = ui.painter();
 		let input_text = format!("{}{}{}", self.prefix, self.input.to_f64(), self.suffix);
@@ -149,7 +149,7 @@ impl<T: Num> Widget for DragableValue<'_, T> {
 		let width =  text_area.width() + 3.0 * ui.style().space + fix_area.width();
 		let height = [16.0, text_area.height(), fix_area.height()].iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() + ui.style().space;
 		let area = Area::new(ui.available_position(), ui.available_position() + Vec2::new(width, height));
-		ui.response(area)
+		ui.response(area, true, true)
 	}
 }
 

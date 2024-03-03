@@ -18,70 +18,94 @@ use nablo_shape::math::Vec2;
 impl Response {
 	/// is this widget was pressed this frame?
 	pub fn is_pressed(&self) -> bool {
-		self.metadata.click_info.pressed_mouse.len() >= 1
+		if let Some(inner) = &self.metadata.click_info {
+			inner.pressed_mouse.len() >= 1
+		}else {
+			false
+		}
 	}
 
 	/// is this widget was pressing this frame?
 	pub fn is_pressing(&self) -> bool {
-		self.metadata.click_info.is_pressed
+		if let Some(inner) = &self.metadata.click_info {
+			inner.is_pressed
+		}else {
+			false
+		}
 	}
 
 	/// is this widget was released this frame?
 	pub fn is_released(&self) -> bool {
-		self.metadata.click_info.released_mouse.len() >= 1
+		if let Some(inner) = &self.metadata.click_info {
+			inner.released_mouse.len() >= 1
+		}else {
+			false
+		}
 	}
 
 	/// is this widget was clicked this frame?
 	pub fn is_clicked(&self) -> bool {
-		self.is_released() && self.metadata.click_info.is_pressed
+		self.is_released() && self.is_pressing()
 	}
 
 	/// is this widget was multi clicked this frame?
 	pub fn is_multi_clicked(&self, multi: usize) -> bool {
-		if multi > self.metadata.click_info.release_time.len() {
-			return false
-		}
-		let mut result = true;
-
-		if Instant::now() - self.metadata.click_info.release_time[self.metadata.click_info.release_time.len() - 1] > Duration::milliseconds(250) {
-			return false
-		}
-
-		for click in self.metadata.click_info.release_time.len() - multi..self.metadata.click_info.release_time.len()-1 {
-			if self.metadata.click_info.release_time[click + 1] - self.metadata.click_info.release_time[click] > Duration::milliseconds(250) {
-				result = false
+		if let Some(inner) = &self.metadata.click_info {
+			if multi > inner.release_time.len() {
+				return false
 			}
-		}
+			let mut result = true;
 
-		result
+			if Instant::now() - inner.release_time[inner.release_time.len() - 1] > Duration::milliseconds(250) {
+				return false
+			}
+
+			for click in inner.release_time.len() - multi..inner.release_time.len()-1 {
+				if inner.release_time[click + 1] - inner.release_time[click] > Duration::milliseconds(250) {
+					result = false
+				}
+			}
+
+			result
+		}else {
+			false
+		}
 	}
 
 	/// where do this widget clicked? [`Option::None`] for haven't clicked yet. 
 	pub fn last_click_position(&self) -> Option<Vec2> {
-		self.metadata.click_info.last_click_position
+		self.metadata.click_info.clone()?.last_click_position
 	}
 
 	/// is this widget draging in this frame?
 	pub fn is_draging(&self) -> bool {
-		self.metadata.drag_info.is_draging
+		if let Some(inner) = &self.metadata.drag_info {
+			inner.is_draging
+		}else {
+			false
+		}
 	}
 
 	/// how much do we drag so far? [`Option::None`] for not draging
 	pub fn drag(&self) -> Option<Vec2> {
-		if self.metadata.drag_info.is_draging {
-			return Some(self.metadata.pointer_position? - self.metadata.drag_info.last_drag_start_position?);
+		if self.is_draging() {
+			return Some(self.metadata.pointer_position? - self.metadata.drag_info.clone()?.last_drag_start_position?);
 		}
 		None
 	}
 
 	/// how much do we drag so far refer to last frame?
 	pub fn drag_delta(&self) -> Vec2 {
-		self.metadata.drag_info.drag_delta
+		if let Some(inner) = &self.metadata.drag_info {
+			inner.drag_delta
+		}else {
+			Vec2::ZERO
+		}
 	}
 
 	/// how long do we drag so far? [`Option::None`] for not draging
 	pub fn drag_time(&self) -> Option<Duration> {
-		Some(self.metadata.drag_info.drag_start_time?.elapsed())
+		Some(self.metadata.drag_info.clone()?.drag_start_time?.elapsed())
 	}
 
 	// /// how much do we drag so far relative to lat frame?
@@ -94,22 +118,30 @@ impl Response {
 
 	/// is this widget hovering in this frame?
 	pub fn is_hovering(&self) -> bool {
-		self.metadata.hover_info.is_hovering
+		if let Some(inner) = &self.metadata.hover_info {
+			inner.is_hovering
+		}else {
+			false
+		}
 	}
 
 	/// is this widget lost hovering in this frame?
 	pub fn is_lost_hover(&self) -> bool {
-		self.metadata.hover_info.last_lost_hover_time.is_some()
+		if let Some(inner) = &self.metadata.hover_info {
+			inner.last_lost_hover_time.is_some()
+		}else {
+			false
+		}
 	}
 
 	/// how long do we hover so far? [`Option::None`] for not hovering
 	pub fn hovering_time(&self) -> Option<Duration> {
-		Some(self.metadata.hover_info.last_hover_time?.elapsed())
+		Some(self.metadata.hover_info.clone()?.last_hover_time?.elapsed())
 	}
 
 	/// how long do we lost hover so far? [`Option::None`] for hovering
 	pub fn lost_hovering_time(&self) -> Option<Duration> {
-		Some(self.metadata.hover_info.last_lost_hover_time?.elapsed())
+		Some(self.metadata.hover_info.clone()?.last_lost_hover_time?.elapsed())
 	}
 
 	/// its a good idea to show someting, so where is the pointer? [`Option::None`] for pointer is not inside the window.
@@ -124,7 +156,7 @@ impl Response {
 
 	/// how long do last hover sustain? [`Option::None`] for not hovered or is hovering, always be positive
 	pub fn hovering_sustain_time(&self) -> Option<Duration> {
-		let time = self.metadata.hover_info.last_lost_hover_time? - self.metadata.hover_info.last_hover_time?;
+		let time = self.metadata.hover_info.clone()?.last_lost_hover_time? - self.metadata.hover_info.clone()?.last_hover_time?;
 		if time.is_positive() {
 			return Some(time);
 		}
@@ -133,19 +165,19 @@ impl Response {
 
 	/// how long since our last press? [`Option::None`] for not pressed
 	pub fn press_time(&self) -> Option<Duration> {
-		if self.metadata.click_info.press_time.len() == 0 {
+		if self.metadata.click_info.clone()?.press_time.len() == 0 {
 			None
 		}else {
-			Some(self.metadata.click_info.press_time[self.metadata.click_info.press_time.len() - 1].elapsed())
+			Some(self.metadata.click_info.clone()?.press_time[self.metadata.click_info.clone()?.press_time.len() - 1].elapsed())
 		}
 	}
 
 	/// how long since our last release? [`Option::None`] for not releases or is pressing
 	pub fn release_time(&self) -> Option<Duration> {
-		if self.metadata.click_info.release_time.len() == 0 {
+		if self.metadata.click_info.clone()?.release_time.len() == 0 {
 			None
 		}else {
-			Some(self.metadata.click_info.release_time[self.metadata.click_info.release_time.len() - 1].elapsed())
+			Some(self.metadata.click_info.clone()?.release_time[self.metadata.click_info.clone()?.release_time.len() - 1].elapsed())
 		}
 	}
 
@@ -160,20 +192,28 @@ impl Response {
 
 	/// get press times
 	pub fn press_times(&self) -> Vec<Duration> {
-		let mut back = vec!();
-		for time in &self.metadata.click_info.press_time {
-			back.push(time.elapsed())
+		if let Some(inner) = &self.metadata.click_info {
+			let mut back = vec!();
+			for time in &inner.press_time {
+				back.push(time.elapsed())
+			}
+			back
+		}else {
+			vec!()
 		}
-		back
 	}
 
 	/// get release times
 	pub fn release_times(&self) -> Vec<Duration> {
-		let mut back = vec!();
-		for time in &self.metadata.click_info.release_time {
-			back.push(time.elapsed())
+		if let Some(inner) = &self.metadata.click_info {
+			let mut back = vec!();
+			for time in &inner.release_time {
+				back.push(time.elapsed())
+			}
+			back
+		}else {
+			vec!()
 		}
-		back
 	}
 
 	/// read something inside memory
@@ -299,15 +339,33 @@ impl HoverInfo {
 
 impl Metadata {
 	pub(crate) fn update(&mut self, input_state: &mut InputState, area: &Area) {
-		self.drag_info.update(input_state, area);
-		self.click_info.update(input_state, area);
-		self.hover_info.update(input_state, area);
+		if let Some(inner) = &mut self.drag_info {
+			inner.update(input_state, area);
+		}
+		if let Some(inner) = &mut self.click_info {
+			inner.update(input_state, area);
+		}
+		if let Some(inner) = &mut self.hover_info {
+			inner.update(input_state, area);
+		}
 		self.pointer_position = input_state.cursor_position();
 	}
 
-	pub(crate) fn new(layer: Layer) -> Self {
+	pub(crate) fn new(layer: Layer, is_clickable: bool, is_dragable: bool) -> Self {
+		let click_info = if is_clickable {
+			Some(ClickInfo::default())
+		}else {
+			None
+		};
+		let drag_info = if is_dragable {
+			Some(DragInfo::default())
+		}else {
+			None
+		};
 		Self {
 			layer,
+			click_info,
+			drag_info,
 			..Default::default()
 		}
 	}
@@ -318,9 +376,9 @@ impl Default for Metadata {
 		Self {
 			layer: Layer::Middle,
 			create_time: Instant::now(),
-			hover_info: HoverInfo::default(),
-			click_info: ClickInfo::default(),
-			drag_info: DragInfo::default(),
+			hover_info: Some(HoverInfo::default()),
+			click_info: Some(ClickInfo::default()),
+			drag_info: Some(DragInfo::default()),
 			pointer_position: None,
 			other_info: String::new(),
 		}

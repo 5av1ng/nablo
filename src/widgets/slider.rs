@@ -171,7 +171,7 @@ impl<T: Num> Widget for Slider<'_, T> {
 
 	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response {
 		if let Some(area) = area {
-			return ui.response(area);
+			return ui.response(area, true, true);
 		}
 		let mut painter = ui.painter();
 		let from = self.from.to_f64();
@@ -190,7 +190,7 @@ impl<T: Num> Widget for Slider<'_, T> {
 		let width = 2.0 * ui.style().space + input_text.width() + text_area.width() + self.width;
 		let height = [16.0, input_text.height(), text_area.height()].iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap() + ui.style().space;
 		let area = Area::new(ui.available_position(), ui.available_position() + Vec2::new(width, height));
-		ui.response(area)
+		ui.response(area, true, true)
 	}
 }
 

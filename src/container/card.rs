@@ -224,6 +224,8 @@ impl Container for Card {
 			}
 		}
 	}
+	fn is_clickable(&self, _: &mut Ui) -> bool { true }
+	fn is_dragable(&self, _: &mut Ui) -> bool { self.resizable || self.dragable || self.scrollable.contains(&true) }
 }
 
 impl Card {

@@ -149,7 +149,9 @@ impl Ui {
 		let mut painter = Painter::from_area(&area);
 		painter.set_layer(layer); 
 		let input_id = format!("{}||{}!!{}",self.available_id.0 ,id, id);
-		let response = self.response_update(size, input_id.clone());
+		let is_clickable = container.is_clickable(self);
+		let is_dragable = container.is_dragable(self);
+		let response = self.response_update(size, input_id.clone(), is_clickable, is_dragable);
 		let if_show = container.begin(self, &mut painter, &response, &input_id);
 		let style = painter.style().clone();
 		let offset = painter.offset;
@@ -175,19 +177,19 @@ impl Ui {
 	}
 
 	/// add a response area to ui
-	pub fn response(&mut self, area: Area) -> Response {
+	pub fn response(&mut self, area: Area, is_clickable: bool, is_dragable: bool) -> Response {
 		let mut area = area;
 		self.position_change(&mut area);
 		Response {
 			area,
-			metadata: Metadata::new(self.paint_style.layer),
+			metadata: Metadata::new(self.paint_style.layer, is_clickable, is_dragable),
 			..Default::default()
 		}
 	}
 
 	/// add a response area to ui, and add a update task before next frame
-	pub fn response_update(&mut self, area: Area, id: String) -> Response {
-		let response = self.response(area);
+	pub fn response_update(&mut self, area: Area, id: String, is_clickable: bool, is_dragable: bool) -> Response {
+		let response = self.response(area, is_clickable, is_dragable);
 		self.add_widget(id, Empty{} , response)
 	}
 
@@ -317,7 +319,7 @@ impl Ui {
 			..Default::default()
 		};
 		let return_value = widgets(&mut sub_ui, container);
-		let inner_response: Vec<Response> = sub_ui.memory.clone().into_par_iter().filter_map(|(key, response)| {
+		let inner_response: Vec<Response> = sub_ui.memory.par_iter().filter_map(|(key, response)| {
 			if utf8_slice::len(&key) < utf8_slice::len(&id) {
 				None
 			}else {
@@ -331,7 +333,7 @@ impl Ui {
 		let area = Area::ZERO;
 		let cover = Response {
 			area,
-			metadata: Metadata::new(self.paint_style.layer),
+			metadata: Metadata::new(self.paint_style.layer, container.is_clickable(self), container.is_dragable(self)),
 			..Default::default()
 		};
 		self.memory = sub_ui.memory;
