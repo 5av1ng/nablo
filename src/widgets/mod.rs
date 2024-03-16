@@ -306,6 +306,7 @@ impl Status {
 pub struct Canvas {
 	painter: Painter,
 	width_and_height: Vec2,
+	dragable: bool,
 }
 
 /// a single line of text

@@ -45,25 +45,19 @@ cfg_if::cfg_if! {
 		mod manager;
 		mod state;
 		use clipboard::ClipboardContext;
-		use crate::texture::Image;
 		use crate::integrator::Integrator;
 		use winit::event_loop::ControlFlow;
 	}else if #[cfg(feature = "baseview_manager")] {
 		mod baseview_manager;
+		mod state;
 		use clipboard::ClipboardContext;
-		use crate::texture::Image;
 		use crate::integrator::Integrator;
 	}
 }
 
 cfg_if::cfg_if! {
 	if #[cfg(feature = "vertexs")] {
-		use nablo_shape::prelude::ShapeElement;
-		use nablo_shape::prelude::shape_elements::Text as ShapeText;
-		use nablo_shape::prelude::shape_elements::Style as ShapeStyle;
-		use nablo_shape::prelude::shape_elements::Image as ShapeImage;
-		use std::collections::BTreeMap;
-		use nablo_shape::shape::shape_elements::Vertex;
+		use crate::integrator::ParsedShape;
 	}
 }
 
@@ -124,6 +118,7 @@ impl Sub for Instant {
 		self.offset - rhs.offset
 	}
 }
+
 cfg_if::cfg_if!{
 	if #[cfg(feature = "manager")] {
 		/// a setting to Manager
@@ -150,14 +145,15 @@ cfg_if::cfg_if!{
 			/// settings to Manager, such as window size.
 			pub settings: Settings,
 			clipboard: Option<ClipboardContext>,
-			image_memory: HashMap<String, Image>,
 			/// where you add wigets
 			integrator: Integrator,
 			/// your app
-			pub app: T
+			pub app: T,
+			#[cfg(target_os = "android")]
+			pub android_app: winit::platform::android::activity::AndroidApp,
 		}
 	}else if #[cfg(feature = "baseview_manager")] {
-		use baseview_manager::State;
+		use state::State;
 		/// a setting to Manager
 		#[derive(Clone)]
 		pub struct Settings {
@@ -193,7 +189,6 @@ cfg_if::cfg_if!{
 			/// settings to Manager, such as window size.
 			pub settings: Settings,
 			clipboard: Option<ClipboardContext>,
-			image_memory: HashMap<String, Image>,
 			/// where you add wigets
 			integrator: Integrator,
 			/// your app
@@ -214,85 +209,12 @@ pub(crate) struct MemoryTemp {
 pub(crate) struct Shapes {
 	pub raw_shape: Vec<Shape>,
 	#[cfg(feature = "vertexs")]
-	pub layered_shapes: (Vec<Vertex>, Vec<u32>),
-	#[cfg(feature = "vertexs")]
-	pub layered_texts: BTreeMap<Layer, Vec<(ShapeText, ShapeStyle)>>,
-	#[cfg(feature = "vertexs")]
-	pub layered_images: BTreeMap<Layer, Vec<(ShapeImage, ShapeStyle)>>,
-	#[cfg(feature = "vertexs")]
-	pub current_layer: Layer,
-	#[cfg(feature = "vertexs")]
-	pub layer_vec: [usize; 6],
+	pub parsed_shapes: Vec<ParsedShape>
 }
 
 impl Shapes {
 	pub fn append(&mut self, shape: impl Into<Vec<Shape>>) {
 		self.raw_shape.append(&mut shape.into())
-	}
-
-	#[cfg(feature = "vertexs")]
-	pub fn push_shape(&mut self, layer: Layer, shape: (Vec<Vertex>, Vec<u32>)) {
-		if layer > self.current_layer {
-			self.current_layer = layer
-		}
-		let (vertexs, indices) = &mut self.layered_shapes;
-		self.layer_vec[layer.into_id()] = self.layer_vec[layer.into_id()] + vertexs.len();
-		let (mut input_vertexs, mut input_indices) = shape;
-		vertexs.append(&mut input_vertexs);
-		indices.append(&mut input_indices);
-	}
-
-	#[cfg(feature = "vertexs")]
-	pub fn push_text(&mut self, layer: Layer, shape: Shape) {
-		if let Some(t) = self.layered_texts.get_mut(&layer) {
-			if let ShapeElement::Text(text) = shape.shape {
-				t.push((text, shape.style))
-			}
-		}else {
-			if let ShapeElement::Text(text) = shape.shape {
-				self.layered_texts.insert(layer, vec!((text, shape.style)));
-			}
-			
-		}
-	}
-
-	#[cfg(feature = "vertexs")]
-	pub fn push_image(&mut self, layer: Layer, shape: Shape) {
-		if let Some(t) = self.layered_images.get_mut(&layer) {
-			if let ShapeElement::Image(image) = shape.shape {
-				t.push((image, shape.style))
-			}
-		}else {
-			if let ShapeElement::Image(image) = shape.shape {
-				self.layered_images.insert(layer, vec!((image, shape.style)));
-			}
-			
-		}
-	}
-
-	#[cfg(feature = "vertexs")]
-	pub fn text_vec(&mut self) -> Vec<(ShapeText, ShapeStyle)> {
-		let mut back = vec!();
-		for (_, a) in &mut self.layered_texts {
-			back.append(a)
-		}
-		back
-	}
-
-	#[cfg(feature = "vertexs")]
-	pub fn shape_vec(&mut self) -> (Vec<Vertex>, Vec<u32>) {
-		let mut vertexs = vec!();
-		let mut indices = vec!();
-		let (ver, ind) = &mut self.layered_shapes;
-		vertexs.append(ver);
-		indices.append(ind);
-		(vertexs, indices)
-	}
-
-	#[cfg(feature = "vertexs")]
-	pub fn vertexs_len(&self) -> u32 {
-		let (ver, _) = &self.layered_shapes;
-		ver.len() as u32
 	}
 
 	#[cfg(not(feature = "vertexs"))]
@@ -303,7 +225,7 @@ impl Shapes {
 	#[cfg(feature = "vertexs")]
 	pub fn clear(&mut self) {
 		self.raw_shape.clear();
-		self.layered_shapes = (vec!(), vec!());
+		self.parsed_shapes.clear();
 	}
 }
 
@@ -436,6 +358,8 @@ pub(crate) struct ClickInfo {
 	last_click_position: Option<Vec2>,
 	pressed_mouse: Vec<MouseButton>,
 	released_mouse: Vec<MouseButton>,
+	pressed_touch: Vec<Touch>,
+	released_touch: Vec<Touch>,
 	is_pressed: bool,
 	is_released: bool,
 }

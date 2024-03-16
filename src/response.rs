@@ -19,7 +19,7 @@ impl Response {
 	/// is this widget was pressed this frame?
 	pub fn is_pressed(&self) -> bool {
 		if let Some(inner) = &self.metadata.click_info {
-			inner.pressed_mouse.len() >= 1
+			inner.pressed_mouse.len() >= 1 || inner.pressed_touch.len() >= 1
 		}else {
 			false
 		}
@@ -37,7 +37,7 @@ impl Response {
 	/// is this widget was released this frame?
 	pub fn is_released(&self) -> bool {
 		if let Some(inner) = &self.metadata.click_info {
-			inner.released_mouse.len() >= 1
+			inner.released_mouse.len() >= 1  || inner.released_touch.len() >= 1
 		}else {
 			false
 		}
@@ -277,26 +277,42 @@ impl ClickInfo {
 			self.is_released = false;
 			self.is_pressed = false;
 		}
+
+		let mut positions = input_state.touch_position();
 		if let Some(t) = input_state.cursor_position() {
-			if area.is_point_inside(&t) {
-				self.pressed_mouse = input_state.pressed_mouse();
-				self.released_mouse = input_state.released_mouse();
-				if input_state.is_any_mouse_pressed_unconsumed() {
-					self.press_time.push(Instant::now());
-					input_state.consume_all_mouse_press();
-					self.is_pressed = true;
-				}
-				if input_state.is_any_mouse_released_unconsumed() {
-					self.release_time.push(Instant::now());
-					input_state.consume_all_mouse_release();
-				}
-			}else {
-				self.pressed_mouse = vec!();
-				self.released_mouse = vec!();
+			positions.push(t)
+		}
+		let mut is_any_inside = false;
+		for position in positions {
+			if area.is_point_inside(&position) {
+				is_any_inside = true;
 			}
+		};
+
+		if is_any_inside {
+			self.pressed_mouse = input_state.pressed_mouse();
+			self.released_mouse = input_state.released_mouse();
+			self.pressed_touch = input_state.pressed_touches();
+			self.released_touch = input_state.released_touches();
+			if input_state.is_any_mouse_pressed_unconsumed() | input_state.is_any_touch_pressed_unconsumed() {
+				self.press_time.push(Instant::now());
+				input_state.consume_all_mouse_press();
+				input_state.consume_all_pressed_touch();
+				self.is_pressed = true;
+			}
+			if input_state.is_any_mouse_released_unconsumed() | input_state.is_any_touch_released_unconsumed() {
+				self.release_time.push(Instant::now());
+				input_state.consume_all_mouse_release();
+				input_state.consume_all_released_touch();
+			}
+		}else {
+			self.pressed_mouse = vec!();
+			self.released_mouse = vec!();
+			self.pressed_touch = vec!();
+			self.released_touch = vec!();
 		}
 
-		if input_state.is_any_mouse_released() {
+		if input_state.is_any_mouse_released() | input_state.is_any_touch_released() {
 			self.is_released = true;
 		}
 		// TODO: Make this value changable
@@ -312,21 +328,23 @@ impl ClickInfo {
 
 impl HoverInfo {
 	pub(crate) fn update(&mut self, input_state: &mut InputState, area: &Area) {
+		let mut positions = input_state.touch_position();
 		if let Some(t) = input_state.cursor_position() {
-			if area.is_point_inside(&t) {
-				self.is_hovering = true;
-				self.last_lost_hover_time = None;
-				if !self.is_insert {
-					self.last_hover_time = Some(Instant::now())
-				}
-				self.is_insert = true;
-			}else {
-				self.is_hovering = false;
-				self.is_insert = false;
-				if let None = self.last_lost_hover_time {
-					self.last_lost_hover_time = Some(Instant::now())
-				}
+			positions.push(t)
+		}
+		let mut is_any_inside = false;
+		for position in positions {
+			if area.is_point_inside(&position) {
+				is_any_inside = true
 			}
+		}
+		if is_any_inside {
+			self.is_hovering = true;
+			self.last_lost_hover_time = None;
+			if !self.is_insert {
+				self.last_hover_time = Some(Instant::now())
+			}
+			self.is_insert = true;
 		}else {
 			self.is_hovering = false;
 			self.is_insert = false;
@@ -394,7 +412,8 @@ impl InputState {
 		self.current_scroll = Vec2::ZERO;
 		self.input_text = String::new();
 		let mut key_to_remove = vec!();
-		for (key, (touch, _)) in &mut self.touch {
+		for (key, (touch, consumption)) in &mut self.touch {
+			*consumption = false;
 			if let TouchPhase::Start = touch.phase {
 				touch.phase = TouchPhase::Hold
 			}
@@ -593,9 +612,132 @@ impl InputState {
 		back
 	}
 
+	pub fn is_any_touch_pressed(&self) -> bool {
+		self.pressed_touches().len() > 0
+	}
+
+	pub fn pressed_touches(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, _)) in &self.touch {
+			if let TouchPhase::Start = touch.phase {
+				back.push(touch.clone());
+			}
+		}
+		back
+	}
+
+	pub fn is_any_touch_pressed_unconsumed(&self) -> bool {
+		self.pressed_touches_unconsumed().len() > 0
+	}
+
+	pub fn pressed_touches_unconsumed(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, consumption)) in &self.touch {
+			if let TouchPhase::Start = touch.phase {
+				if !consumption {
+					back.push(touch.clone());
+				}
+			}
+		}
+		back
+	}
+
+	pub fn consume_all_pressed_touch(&mut self) {
+		for (_, (touch, consumption)) in &mut self.touch {
+			if let TouchPhase::Start = touch.phase {
+				*consumption = false;
+			}
+		}
+	}
+
+	pub fn is_any_touch_pressing(&self) -> bool {
+		self.pressing_touches().len() > 0
+	}
+
+	pub fn pressing_touches(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, _)) in &self.touch {
+			if let TouchPhase::Hold = touch.phase {
+				back.push(touch.clone());
+			}
+		}
+		back
+	}
+
+	pub fn is_any_touch_pressing_unconsumed(&self) -> bool {
+		self.pressing_touches_unconsumed().len() > 0
+	}
+
+	pub fn pressing_touches_unconsumed(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, consumption)) in &self.touch {
+			if let TouchPhase::Hold = touch.phase {
+				if !consumption {
+					back.push(touch.clone());
+				}
+			}
+		}
+		back
+	}
+
+	pub fn consume_all_pressing_touch(&mut self) {
+		for (_, (touch, consumption)) in &mut self.touch {
+			if let TouchPhase::Hold = touch.phase {
+				*consumption = false;
+			}
+		}
+	}
+
+	pub fn is_any_touch_released(&self) -> bool {
+		self.released_mouse().len() >  0
+	}
+
+	pub fn released_touches(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, _)) in &self.touch {
+			if let TouchPhase::End = touch.phase {
+				back.push(touch.clone());
+			}
+		}
+		back
+	}
+
+	pub fn is_any_touch_released_unconsumed(&self) -> bool {
+		self.released_touches_unconsumed().len() > 0
+	}
+
+	pub fn released_touches_unconsumed(&self) -> Vec<Touch> {
+		let mut back = vec!();
+		for (_, (touch, consumption)) in &self.touch {
+			if let TouchPhase::End = touch.phase {
+				if !consumption {
+					back.push(touch.clone());
+				}
+			}
+		}
+		back
+	}
+
+	pub fn consume_all_released_touch(&mut self) {
+		for (_, (touch, consumption)) in &mut self.touch {
+			if let TouchPhase::End = touch.phase {
+				*consumption = false;
+			}
+		}
+	}
+
 	/// where is cursor? for touch devices or cursor is out of window this would be [`Option::None`]
 	pub fn cursor_position(&self) -> Option<Vec2> {
 		self.cursor_position
+	}
+
+	/// where is touches?
+	pub fn touch_position(&self) -> Vec<Vec2> {
+		let mut back = vec!();
+		for (_, (touch, _)) in &self.touch {
+			back.push(touch.position)
+		}
+		back
 	}
 
 	/// get what txt has been input this frame

@@ -459,12 +459,13 @@ impl Ui {
 		let shapes = self.shape.raw_shape.clone();
 		self.shape.raw_shape.clear();
 		for shape in shapes {
-			if let ShapeElement::Text(_) = shape.shape {
-				self.shape.push_text(shape.style.layer, shape.clone())
-			}else if let ShapeElement::Image(_) = shape.shape {
-				self.shape.push_image(shape.style.layer, shape.clone())
+			if let ShapeElement::Text(inner) = shape.shape {
+				self.shape.parsed_shapes.push(ParsedShape::Text(inner, shape.style))
+			}else if let ShapeElement::Image(inner) = shape.shape {
+				self.shape.parsed_shapes.push(ParsedShape::Image(inner, shape.style))
 			}else {
-				self.shape.push_shape(shape.style.layer, shape.into_vertexs(self.window.width_and_height(), self.shape.vertexs_len()))
+				let (vertexs, indices, clip_area) = shape.into_vertexs(self.window.width_and_height());
+				self.shape.parsed_shapes.push(ParsedShape::Vertexs { vertexs, indices, clip_area })
 			}
 		}
 	}

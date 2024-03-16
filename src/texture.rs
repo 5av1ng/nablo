@@ -1,7 +1,7 @@
 //! texture the host will handle.
 
 #[cfg(any(feature = "manager", feature = "baseview_manager"))]
-use raqote::DrawTarget;
+use crate::state::WTexture;
 use nablo_shape::prelude::Vec2;
 
 /// a image to be added.
@@ -13,14 +13,19 @@ pub struct Image {
 }
 
 #[cfg(any(feature = "manager", feature = "baseview_manager"))]
-pub(crate) fn create_texture(size: Vec2, device: &wgpu::Device, queue: &wgpu::Queue) -> (wgpu::Texture, wgpu::BindGroupLayout, wgpu::BindGroup) {
+pub(crate) fn create_texture(size: Vec2, device: &wgpu::Device, queue: &wgpu::Queue) -> WTexture {
+	let shapes: Vec<u8> = (0..(size.x * size.y * 4.0) as usize).into_iter().map(|_| 0u8).collect();
+	create_texture_with_data(size, device, queue, shapes)
+}
+
+#[cfg(any(feature = "manager", feature = "baseview_manager"))]
+pub(crate) fn create_texture_with_data(size: Vec2, device: &wgpu::Device, queue: &wgpu::Queue, data: Vec<u8>) -> WTexture {
 	let texture_size = wgpu::Extent3d {
 		width: size.x as u32,
 		height: size.y as u32,
 		depth_or_array_layers: 1,
 	};
 
-	#[cfg(not(target_arch = "wasm32"))]
 	let diffuse_texture = device.create_texture(
 		&wgpu::TextureDescriptor {
 			size: texture_size,
@@ -28,34 +33,20 @@ pub(crate) fn create_texture(size: Vec2, device: &wgpu::Device, queue: &wgpu::Qu
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: wgpu::TextureFormat::Bgra8UnormSrgb,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-			label: Some("main_texture"),
-			view_formats: &[],
-		}
-	);
-	#[cfg(target_arch = "wasm32")]
-	let diffuse_texture = device.create_texture(
-		&wgpu::TextureDescriptor {
-			size: texture_size,
-			mip_level_count: 1,
-			sample_count: 1,
-			dimension: wgpu::TextureDimension::D2,
-			format: wgpu::TextureFormat::Rgba8UnormSrgb,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
 			label: Some("main_texture"),
 			view_formats: &[],
 		}
 	);
 
-	let dt = DrawTarget::new(size.x as i32, size.y as i32);
-	let shapes = dt.get_data_u8();
+	let slice = data.as_slice();
 
 	queue.write_texture(wgpu::ImageCopyTexture {
 		texture: &diffuse_texture,
 		mip_level: 0,
 		origin: wgpu::Origin3d::ZERO,
 		aspect: wgpu::TextureAspect::All,
-	}, &shapes, wgpu::ImageDataLayout {
+	}, &slice, wgpu::ImageDataLayout {
 		offset: 0,
 		bytes_per_row: Some(size.x as u32 * 4),
 		rows_per_image: Some(size.y as u32),
@@ -107,5 +98,9 @@ pub(crate) fn create_texture(size: Vec2, device: &wgpu::Device, queue: &wgpu::Qu
 			label: Some("diffuse_bind_group"),
 		}
 	);
-	(diffuse_texture,texture_bind_group_layout , diffuse_bind_group)
+	WTexture {
+		texture: diffuse_texture,
+		layout: texture_bind_group_layout,
+		bind_group: diffuse_bind_group
+	}
 }

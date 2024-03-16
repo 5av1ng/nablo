@@ -5,9 +5,8 @@ use nablo_shape::math::Vec2;
 cfg_if::cfg_if! {
 	if #[cfg(feature = "manager")] {
 		use winit::event::ElementState;
-		use winit::keyboard::KeyCode;
-		use winit::event::WindowEvent;
-		use winit::keyboard::PhysicalKey;
+		use winit::event::VirtualKeyCode as KeyCode;
+		use winit::event::WindowEvent as WinitWindowEvent;
 	}
 }
 
@@ -17,7 +16,7 @@ cfg_if::cfg_if! {
 		use baseview::MouseButton as BaseviewMouseButton;
 		use baseview::MouseEvent;
 		use baseview::ScrollDelta;
-		use baseview::WindowEvent;
+		use baseview::WindowEvent as BaseviewWindowEvent;
 		use keyboard_types::Key as KeyEvent;
 	}
 }
@@ -92,14 +91,19 @@ pub enum MouseButton {
 }
 
 #[cfg(feature = "manager")]
-impl Into<Event> for WindowEvent {
+impl Into<Event> for WinitWindowEvent<'_> {
 	fn into(self) -> Event { 
 		match self {
-			Self::KeyboardInput{event, is_synthetic, .. } => {
+			Self::KeyboardInput{ input, is_synthetic, .. } => {
 				if !is_synthetic {
-					match event.state {
-						winit::event::ElementState::Pressed => Event::KeyPressed(event.physical_key.into()),
-						winit::event::ElementState::Released => Event::KeyRelease(event.physical_key.into()),
+					let key = if let Some(t) = input.virtual_keycode {
+						Key::from(t.into())
+					}else {
+						Key::Unknown(0)
+					};
+					match input.state {
+						winit::event::ElementState::Pressed => Event::KeyPressed(key),
+						winit::event::ElementState::Released => Event::KeyRelease(key),
 					}
 				}else {
 					Event::NotSupported
@@ -115,8 +119,8 @@ impl Into<Event> for WindowEvent {
 							winit::event::MouseButton::Left => Event::MouseClick(MouseButton::Left),
 							winit::event::MouseButton::Right => Event::MouseClick(MouseButton::Right),
 							winit::event::MouseButton::Middle => Event::MouseClick(MouseButton::Middle),
-							winit::event::MouseButton::Back => Event::MouseClick(MouseButton::Back),
-							winit::event::MouseButton::Forward => Event::MouseClick(MouseButton::Forward),
+							// winit::event::MouseButton::Back => Event::MouseClick(MouseButton::Back),
+							// winit::event::MouseButton::Forward => Event::MouseClick(MouseButton::Forward),
 							winit::event::MouseButton::Other(t) => Event::MouseClick(MouseButton::Other(t.into())),
 						}
 					},
@@ -125,8 +129,8 @@ impl Into<Event> for WindowEvent {
 							winit::event::MouseButton::Left => Event::MouseRelease(MouseButton::Left),
 							winit::event::MouseButton::Right => Event::MouseRelease(MouseButton::Right),
 							winit::event::MouseButton::Middle => Event::MouseRelease(MouseButton::Middle),
-							winit::event::MouseButton::Back => Event::MouseRelease(MouseButton::Back),
-							winit::event::MouseButton::Forward => Event::MouseRelease(MouseButton::Forward),
+							// winit::event::MouseButton::Back => Event::MouseRelease(MouseButton::Back),
+							// winit::event::MouseButton::Forward => Event::MouseRelease(MouseButton::Forward),
 							winit::event::MouseButton::Other(t) => Event::MouseRelease(MouseButton::Other(t.into())),
 				    	}
 					},
@@ -302,141 +306,128 @@ impl Key {
 }
 
 #[cfg(feature = "manager")]
-impl Into<Key> for PhysicalKey {
+impl Into<Key> for KeyCode {
 	fn into(self) -> Key { 
 		match self {
-			Self::Code(known_key) => {
-				match known_key {
-					KeyCode::KeyA => Key::A,
-					KeyCode::KeyB => Key::B,
-					KeyCode::KeyC => Key::C,
-					KeyCode::KeyD => Key::D,
-					KeyCode::KeyE => Key::E,
-					KeyCode::KeyF => Key::F,
-					KeyCode::KeyG => Key::G,
-					KeyCode::KeyH => Key::H,
-					KeyCode::KeyI => Key::I,
-					KeyCode::KeyJ => Key::J,
-					KeyCode::KeyK => Key::K,
-					KeyCode::KeyL => Key::L,
-					KeyCode::KeyM => Key::M,
-					KeyCode::KeyN => Key::N,
-					KeyCode::KeyO => Key::O,
-					KeyCode::KeyP => Key::P,
-					KeyCode::KeyQ => Key::Q,
-					KeyCode::KeyR => Key::R,
-					KeyCode::KeyS => Key::S,
-					KeyCode::KeyT => Key::T,
-					KeyCode::KeyU => Key::U,
-					KeyCode::KeyV => Key::V,
-					KeyCode::KeyW => Key::W,
-					KeyCode::KeyX => Key::X,
-					KeyCode::KeyY => Key::Y,
-					KeyCode::KeyZ => Key::Z,
-					KeyCode::Digit0 => Key::Num0,
-					KeyCode::Digit1 => Key::Num1,
-					KeyCode::Digit2 => Key::Num2,
-					KeyCode::Digit3 => Key::Num3,
-					KeyCode::Digit4 => Key::Num4,
-					KeyCode::Digit5 => Key::Num5,
-					KeyCode::Digit6 => Key::Num6,
-					KeyCode::Digit7 => Key::Num7,
-					KeyCode::Digit8 => Key::Num8,
-					KeyCode::Digit9 => Key::Num9,
-					KeyCode::NumLock => Key::NumLock,
-					KeyCode::Numpad0 => Key::NumPad0,
-					KeyCode::Numpad1 => Key::NumPad1,
-					KeyCode::Numpad2 => Key::NumPad2,
-					KeyCode::Numpad3 => Key::NumPad3,
-					KeyCode::Numpad4 => Key::NumPad4,
-					KeyCode::Numpad5 => Key::NumPad5,
-					KeyCode::Numpad6 => Key::NumPad6,
-					KeyCode::Numpad7 => Key::NumPad7,
-					KeyCode::Numpad8 => Key::NumPad8,
-					KeyCode::Numpad9 => Key::NumPad9,
-					KeyCode::F1 => Key::F1,
-					KeyCode::F2 => Key::F2,
-					KeyCode::F3 => Key::F3,
-					KeyCode::F4 => Key::F4,
-					KeyCode::F5 => Key::F5,
-					KeyCode::F6 => Key::F6,
-					KeyCode::F7 => Key::F7,
-					KeyCode::F8 => Key::F8,
-					KeyCode::F9 => Key::F9,
-					KeyCode::F10 => Key::F10,
-					KeyCode::F11 => Key::F11,
-					KeyCode::F12 => Key::F12,
-					KeyCode::F13 => Key::F13,
-					KeyCode::F14 => Key::F14,
-					KeyCode::F15 => Key::F15,
-					KeyCode::F16 => Key::F16,
-					KeyCode::F17 => Key::F17,
-					KeyCode::F18 => Key::F18,
-					KeyCode::F19 => Key::F19,
-					KeyCode::F20 => Key::F20,
-					KeyCode::F21 => Key::F21,
-					KeyCode::F22 => Key::F22,
-					KeyCode::F23 => Key::F23,
-					KeyCode::F24 => Key::F24,
-					KeyCode::F25 => Key::F25,
-					KeyCode::F26 => Key::F26,
-					KeyCode::F27 => Key::F27,
-					KeyCode::F28 => Key::F28,
-					KeyCode::F29 => Key::F29,
-					KeyCode::F30 => Key::F30,
-					KeyCode::F31 => Key::F31,
-					KeyCode::F32 => Key::F32,
-					KeyCode::F33 => Key::F33,
-					KeyCode::F34 => Key::F34,
-					KeyCode::F35 => Key::F35,
-					KeyCode::Delete => Key::Delete,
-					KeyCode::End => Key::End,
-					KeyCode::Home => Key::Home,
-					KeyCode::Insert => Key::Insert,
-					KeyCode::PageDown => Key::PageDown,
-					KeyCode::PageUp => Key::PageUp,
-					KeyCode::ArrowDown => Key::ArrowDown,
-					KeyCode::ArrowLeft => Key::ArrowLeft,
-					KeyCode::ArrowRight => Key::ArrowRight,
-					KeyCode::ArrowUp => Key::ArrowUp,
-					KeyCode::Backquote => Key::Backquote,
-					KeyCode::Backslash => Key::Backslash,
-					KeyCode::BracketLeft => Key::BracketLeft,
-					KeyCode::BracketRight => Key::BracketRight,
-					KeyCode::Comma => Key::Comma,
-					KeyCode::Backspace | KeyCode::NumpadBackspace => Key::Backspace,
-					KeyCode::ControlLeft => Key::ControlLeft,
-					KeyCode::ControlRight => Key::ControlRight,
-					KeyCode::Escape => Key::Escape,
-					KeyCode::Tab => Key::Tab,
-					KeyCode::Enter => Key::Enter,
-					KeyCode::Space => Key::Space,
-					KeyCode::Minus => Key::Minus,
-					KeyCode::Pause => Key::Pause,
-					KeyCode::Equal => Key::Equal,
-					KeyCode::CapsLock => Key::CapsLock,
-					KeyCode::ShiftLeft => Key::ShiftLeft,
-					KeyCode::ShiftRight => Key::ShiftRight,
-					KeyCode::Slash => Key::Slash,
-					KeyCode::Semicolon => Key::Semicolon,
-					KeyCode::Quote => Key::Quote,
-					KeyCode::AltLeft => Key::AltLeft,
-					KeyCode::AltRight => Key::AltRight,
-					KeyCode::Period => Key::Period,
-					KeyCode::PrintScreen => Key::PrintScreen,
-					KeyCode::ScrollLock => Key::ScrollLock,
-					_ => {Key::Unknown(0)},
-				}
-			},
-			Self::Unidentified(code) => {
-				match code {
-					winit::keyboard::NativeKeyCode::Unidentified => Key::Unknown(0),
-					winit::keyboard::NativeKeyCode::Android(t) => Key::Unknown(t as usize),
-					winit::keyboard::NativeKeyCode::MacOS(t) => Key::Unknown(t as usize),
-					winit::keyboard::NativeKeyCode::Windows(t) => Key::Unknown(t as usize),
-					winit::keyboard::NativeKeyCode::Xkb(t) => Key::Unknown(t as usize),
-				}
-			}
+			KeyCode::A => Key::A,
+			KeyCode::B => Key::B,
+			KeyCode::C => Key::C,
+			KeyCode::D => Key::D,
+			KeyCode::E => Key::E,
+			KeyCode::F => Key::F,
+			KeyCode::G => Key::G,
+			KeyCode::H => Key::H,
+			KeyCode::I => Key::I,
+			KeyCode::J => Key::J,
+			KeyCode::K => Key::K,
+			KeyCode::L => Key::L,
+			KeyCode::M => Key::M,
+			KeyCode::N => Key::N,
+			KeyCode::O => Key::O,
+			KeyCode::P => Key::P,
+			KeyCode::Q => Key::Q,
+			KeyCode::R => Key::R,
+			KeyCode::S => Key::S,
+			KeyCode::T => Key::T,
+			KeyCode::U => Key::U,
+			KeyCode::V => Key::V,
+			KeyCode::W => Key::W,
+			KeyCode::X => Key::X,
+			KeyCode::Y => Key::Y,
+			KeyCode::Z => Key::Z,
+			KeyCode::Key0 => Key::Num0,
+			KeyCode::Key1 => Key::Num1,
+			KeyCode::Key2 => Key::Num2,
+			KeyCode::Key3 => Key::Num3,
+			KeyCode::Key4 => Key::Num4,
+			KeyCode::Key5 => Key::Num5,
+			KeyCode::Key6 => Key::Num6,
+			KeyCode::Key7 => Key::Num7,
+			KeyCode::Key8 => Key::Num8,
+			KeyCode::Key9 => Key::Num9,
+			KeyCode::Numlock => Key::NumLock,
+			KeyCode::Numpad0 => Key::NumPad0,
+			KeyCode::Numpad1 => Key::NumPad1,
+			KeyCode::Numpad2 => Key::NumPad2,
+			KeyCode::Numpad3 => Key::NumPad3,
+			KeyCode::Numpad4 => Key::NumPad4,
+			KeyCode::Numpad5 => Key::NumPad5,
+			KeyCode::Numpad6 => Key::NumPad6,
+			KeyCode::Numpad7 => Key::NumPad7,
+			KeyCode::Numpad8 => Key::NumPad8,
+			KeyCode::Numpad9 => Key::NumPad9,
+			KeyCode::F1 => Key::F1,
+			KeyCode::F2 => Key::F2,
+			KeyCode::F3 => Key::F3,
+			KeyCode::F4 => Key::F4,
+			KeyCode::F5 => Key::F5,
+			KeyCode::F6 => Key::F6,
+			KeyCode::F7 => Key::F7,
+			KeyCode::F8 => Key::F8,
+			KeyCode::F9 => Key::F9,
+			KeyCode::F10 => Key::F10,
+			KeyCode::F11 => Key::F11,
+			KeyCode::F12 => Key::F12,
+			KeyCode::F13 => Key::F13,
+			KeyCode::F14 => Key::F14,
+			KeyCode::F15 => Key::F15,
+			KeyCode::F16 => Key::F16,
+			KeyCode::F17 => Key::F17,
+			KeyCode::F18 => Key::F18,
+			KeyCode::F19 => Key::F19,
+			KeyCode::F20 => Key::F20,
+			KeyCode::F21 => Key::F21,
+			KeyCode::F22 => Key::F22,
+			KeyCode::F23 => Key::F23,
+			KeyCode::F24 => Key::F24,
+			// KeyCode::F25 => Key::F25,
+			// KeyCode::F26 => Key::F26,
+			// KeyCode::F27 => Key::F27,
+			// KeyCode::F28 => Key::F28,
+			// KeyCode::F29 => Key::F29,
+			// KeyCode::F30 => Key::F30,
+			// KeyCode::F31 => Key::F31,
+			// KeyCode::F32 => Key::F32,
+			// KeyCode::F33 => Key::F33,
+			// KeyCode::F34 => Key::F34,
+			// KeyCode::F35 => Key::F35,
+			KeyCode::Delete => Key::Delete,
+			KeyCode::End => Key::End,
+			KeyCode::Home => Key::Home,
+			KeyCode::Insert => Key::Insert,
+			KeyCode::PageDown => Key::PageDown,
+			KeyCode::PageUp => Key::PageUp,
+			KeyCode::Down => Key::ArrowDown,
+			KeyCode::Left => Key::ArrowLeft,
+			KeyCode::Right => Key::ArrowRight,
+			KeyCode::Up => Key::ArrowUp,
+			// KeyCode::Backquote => Key::Backquote,
+			KeyCode::Backslash => Key::Backslash,
+			KeyCode::LBracket  => Key::BracketLeft,
+			KeyCode::RBracket => Key::BracketRight,
+			KeyCode::Comma => Key::Comma,
+			KeyCode::Back => Key::Backspace,
+			KeyCode::LControl => Key::ControlLeft,
+			KeyCode::RControl => Key::ControlRight,
+			KeyCode::Escape => Key::Escape,
+			KeyCode::Tab => Key::Tab,
+			KeyCode::Return => Key::Enter,
+			KeyCode::Space => Key::Space,
+			KeyCode::Minus => Key::Minus,
+			KeyCode::Pause => Key::Pause,
+			KeyCode::Equals => Key::Equal,
+			KeyCode::Capital => Key::CapsLock,
+			KeyCode::LShift => Key::ShiftLeft,
+			KeyCode::RShift => Key::ShiftRight,
+			KeyCode::Slash => Key::Slash,
+			KeyCode::Semicolon => Key::Semicolon,
+			// KeyCode::Quote => Key::Quote,
+			KeyCode::LAlt => Key::AltLeft,
+			KeyCode::RAlt => Key::AltRight,
+			KeyCode::Period => Key::Period,
+			KeyCode::Snapshot  => Key::PrintScreen,
+			KeyCode::Scroll => Key::ScrollLock,
+			_ => {Key::Unknown(0)},
 		}
 	}
 }
@@ -585,7 +576,7 @@ impl Into<Event> for BaseviewEvent {
 			},
 			BaseviewEvent::Window(event) => {
 				match event {
-					WindowEvent::Resized(inner) => Event::Resized(Vec2::new(inner.logical_size().width as f32, inner.logical_size().height as f32)),
+					BaseviewWindowEvent::Resized(inner) => Event::Resized(Vec2::new(inner.logical_size().width as f32, inner.logical_size().height as f32)),
 					_ => Event::NotSupported
 				}
 			},

@@ -19,7 +19,7 @@ impl Widget for Canvas {
 			Some(t) => t,
 			None => Area::new(ui.available_position(), ui.available_position() + self.width_and_height)
 		};
-		ui.response(area, true, false)
+		ui.response(area, true, self.dragable)
 	}
 }
 
@@ -31,6 +31,7 @@ impl Canvas {
 		Self {
 			width_and_height,
 			painter,
+			dragable: false,
 		}
 	}
 
@@ -41,6 +42,14 @@ impl Canvas {
 		(Self {
 			width_and_height,
 			painter,
+			dragable: false,
 		}, back)
+	}
+
+	pub fn dragable(self, dragable: bool) -> Self {
+		Self {
+			dragable,
+			..self
+		}
 	}
 }

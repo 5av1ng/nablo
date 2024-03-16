@@ -11,4 +11,7 @@ pub use crate::event::*;
 #[cfg(feature = "nablo_data")]
 pub use nablo_data::*;
 
+#[cfg(target_os = "android")]
+pub use winit::platform::android::activity::*;
+
 pub use nablo_shape::prelude::*;

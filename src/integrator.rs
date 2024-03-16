@@ -19,6 +19,10 @@
  * ```
 */
 
+#[cfg(feature = "vertexs")]
+use nablo_shape::prelude::Area;
+#[cfg(feature = "vertexs")]
+use nablo_shape::prelude::shape_elements::Image;
 use crate::OutputEvent;
 use nablo_shape::prelude::shape_elements::Color;
 #[cfg(feature = "vertexs")]
@@ -30,6 +34,19 @@ use nablo_shape::prelude::shape_elements::Text;
 use crate::Event;
 use crate::Shape;
 use crate::Ui;
+
+/// the shape prased
+#[cfg(feature = "vertexs")]
+#[derive(Clone)]
+pub enum ParsedShape {
+	Vertexs {
+		vertexs: Vec<Vertex>, 
+		indices: Vec<u32>,
+		clip_area: Area,
+	},
+	Text(Text, Style),
+	Image(Image, Style),
+}
 
 /// helper of integrating
 #[derive(Default)]
@@ -48,26 +65,9 @@ pub struct Output<S> {
 	pub output_events: Vec<OutputEvent>
 }
 
-/// after running ui code, here's things you should paint
-pub struct ShapeOutput {
-	/// contains the shapes you should paint
-	pub shapes: Vec<Shape>,
-}
-
-#[cfg(feature = "vertexs")]
-/// after running ui code, here's things you should paint
-pub struct VertexsOutput {
-	/// contains the texts you should paint
-	pub texts: Vec<(Text, Style)>,
-	/// contains the vertexs you should paint, normailized between -1 to 1
-	pub vertexs: Vec<Vertex>,
-	/// contains the indices
-	pub indices: Vec<u32>
-}
-
 impl Integrator {
 	/// run the ui code for one frame.
-	pub fn frame(&mut self, input_events: Vec<Event>, ui_code: impl FnOnce(&mut Ui)) -> Output<ShapeOutput> {
+	pub fn frame(&mut self, input_events: Vec<Event>, ui_code: impl FnOnce(&mut Ui)) -> Output<Vec<Shape>> {
 		for event in input_events {
 			self.ui.event(&event)
 		}
@@ -76,7 +76,7 @@ impl Integrator {
 		self.ui.raw_shape();
 		let output = Output {
 			background_color: self.ui.style().background_color,
-			shapes: ShapeOutput { shapes: self.ui.shape.raw_shape.clone() },
+			shapes: self.ui.shape.raw_shape.clone(),
 			output_events: self.ui.output_events.clone(),
 		};
 		self.ui.clear();
@@ -85,22 +85,16 @@ impl Integrator {
 
 	#[cfg(feature = "vertexs")]
 	/// run the ui code for one frame, but out puts vertexs. dont take accout in texts
-	pub fn frame_vertexs(&mut self, input_events: Vec<Event>, ui_code: impl FnOnce(&mut Ui)) -> Output<VertexsOutput> {
+	pub fn frame_vertexs(&mut self, input_events: Vec<Event>, ui_code: impl FnOnce(&mut Ui)) -> Output<Vec<ParsedShape>> {
 		for event in input_events {
 			self.ui.event(&event)
 		}
 		self.ui.update();
 		ui_code(&mut self.ui);
 		self.ui.handle_raw_shape();
-		let (vertexs, indices) = self.ui.shape.shape_vec();
-		let output = VertexsOutput {
-			texts: self.ui.shape.text_vec(),
-			vertexs,
-			indices
-		};
 		let output = Output {
 			background_color: self.ui.style().background_color,
-			shapes: output,
+			shapes: self.ui.shape.parsed_shapes.clone(),
 			output_events: self.ui.output_events.clone(),
 		};
 		self.ui.clear();

@@ -1,31 +1,26 @@
-use crate::PASSWORD;
-use sw_composite::muldiv255;
-use fontdue::Font;
-use crate::texture::create_texture;
-use wgpu::util::DeviceExt;
-use nablo_shape::shape::shape_elements::Shape;
-use nablo_shape::prelude::shape_elements::Rect;
-use std::collections::HashMap;
-use nablo_shape::prelude::ShapeMask;
-use nablo_shape::prelude::shape_elements::EM;
-use std::result::Result::Ok;
-use std::f32::consts::PI;
-use euclid::Angle;
-use euclid::Vector2D;
-use euclid::Transform2D;
 use nablo_shape::prelude::shape_elements::Style;
-use nablo_shape::prelude::ShapeElement;
-use crate::integrator::ShapeOutput;
+use wgpu_text::BrushBuilder;
+use nablo_shape::prelude::shape_elements::DEFAULT_FONT;
+use crate::texture::create_texture_with_data;
+use crate::prelude::shape_elements::Rect;
+use nablo_shape::prelude::ShapeMask;
+use std::collections::HashMap;
+use nablo_shape::prelude::Area;
+use crate::ParsedShape;
+use nablo_shape::prelude::shape_elements::CORRECTION;
+use nablo_shape::prelude::shape_elements::EM;
+use wgpu_text::TextBrush;
+use wgpu_text::glyph_brush::Section as TextSection;
+use wgpu_text::glyph_brush::Text as WText;
+use wgpu_text::glyph_brush::ab_glyph::FontArc;
+use crate::texture::create_texture;
+use std::result::Result::Ok;
 use crate::integrator::Output;
 use wgpu::include_wgsl;
-use std::iter;
 use nablo_shape::math::Vec2;
-use winit::window::Window;
 use pollster::FutureExt as _;
-use raqote::*;
+// use raqote::*;
 use anyhow::*;
-use crate::texture::Image as NabloImage;
-use rayon::prelude::*;
 
 /// a struct for using wgpu
 pub(crate) struct State {
@@ -35,38 +30,47 @@ pub(crate) struct State {
 	pub config: wgpu::SurfaceConfiguration,
 	pub size: Vec2,
 	pub render_pipeline: wgpu::RenderPipeline,
-	pub diffuse_texture: wgpu::Texture,
-	pub diffuse_bind_group: wgpu::BindGroup,
-	pub vertex_buffer: wgpu::Buffer,
-	pub index_buffer: wgpu::Buffer,
+	pub empty_texture: WTexture,
+	pub vertex_buffer: Vec<wgpu::Buffer>,
+	pub index_buffer: Vec<wgpu::Buffer>,
 	pub shader: wgpu::ShaderModule,
+	// contains original image size
+	pub texture_map: HashMap<String, WTexture>,
+	pub brushes: Vec<TextBrush<FontArc>>,
+	pub font: FontArc,
 }
 
+pub(crate) struct WTexture {
+	#[allow(dead_code)]
+	pub texture: wgpu::Texture,
+	pub bind_group: wgpu::BindGroup,
+	pub layout: wgpu::BindGroupLayout,
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
 	position: [f32; 3],
-	tex_coords: [f32; 2],
+	color: [f32; 4],
+	/// 0 = false, other = true, do not find bool in wgpu VertexFormat :(.
+	is_texture: u32
 }
 
-const VERTICES: &[Vertex] = &[
-	Vertex { position: [-1.0, 1.0, 0.0], tex_coords: [0.0, 0.0], },
-	Vertex { position: [-1.0, -1.0, 0.0], tex_coords: [0.0, 1.0], },
-	Vertex { position: [1.0, -1.0, 0.0], tex_coords: [1.0, 1.0], },
-	Vertex { position: [1.0, 1.0, 0.0], tex_coords: [1.0, 0.0], }
-];
+// const VERTICES: &[Vertex] = &[
+// 	Vertex { position: [-1.0, 1.0, 0.0], color: [0.0, 0.0, 0.0, 0.0], is_texture: 1 },
+// 	Vertex { position: [-1.0, -1.0, 0.0], color: [0.0, 1.0, 0.0, 0.0], is_texture: 1 },
+// 	Vertex { position: [1.0, -1.0, 0.0], color: [1.0, 1.0, 0.0, 0.0], is_texture: 1 },
+// 	Vertex { position: [1.0, 1.0, 0.0], color: [1.0, 0.0, 0.0, 0.0], is_texture: 1 }
+// ];
 
 const INDICES: &[u32] = &[
 	0, 1, 2,
 	0, 2, 3,
 ];
 
-const MOVE_DOWN_LETTER: [char; 36] = ['a','c','e','g','m','n','o','p','q','r','s','u','v','w','x','y','z','α','γ','ε','η','ι','κ','μ','ν','ο','π','ρ','σ','τ','υ','χ','ω','>','<','~'];
-
 impl State {
-	pub(crate) fn new(window: &Window) -> Self {
-		let mut size = Vec2::new(window.inner_size().width as f32, window.inner_size().height as f32);
+	pub(crate) fn new<Window: raw_window_handle::HasRawDisplayHandle + raw_window_handle::HasRawWindowHandle>(window: &Window, size: Vec2) -> Self {
+		let mut size = size;
 		if size.x == 0.0{
 			size.x = 640.0
 		}
@@ -111,11 +115,11 @@ impl State {
 
 		let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
-		let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture([size.x, size.y].into(), &device, &queue);
+		let empty_texture = create_texture([size.x, size.y].into(), &device, &queue);
 
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Render Pipeline Layout"),
-			bind_group_layouts: &[&texture_bind_group_layout],
+			bind_group_layouts: &[&empty_texture.layout],
 			push_constant_ranges: &[],
 		});
 
@@ -140,7 +144,7 @@ impl State {
 				topology: wgpu::PrimitiveTopology::TriangleList, 
 				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: Some(wgpu::Face::Back),
+				cull_mode: Some(wgpu::Face::Front),
 				polygon_mode: wgpu::PolygonMode::Fill,
 				unclipped_depth: false,
 				conservative: false,
@@ -154,21 +158,26 @@ impl State {
 			multiview: None,
 		});
 
-		let vertex_buffer = device.create_buffer_init(
-			&wgpu::util::BufferInitDescriptor {
-				label: Some("Vertex Buffer"),
-				contents: bytemuck::cast_slice(VERTICES),
-				usage: wgpu::BufferUsages::VERTEX,
+		let vertex_buffer = vec!(device.create_buffer(
+			&wgpu::BufferDescriptor {
+				label: Some(&format!("Vertex Buffer Render")),
+				size: 2_u64.pow(16),
+				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+				mapped_at_creation: false,
 			}
-		);
+		));
 
-		let index_buffer = device.create_buffer_init(
-			&wgpu::util::BufferInitDescriptor {
-				label: Some("Index Buffer"),
-				contents: bytemuck::cast_slice(INDICES),
-				usage: wgpu::BufferUsages::INDEX,
+		let index_buffer = vec!(device.create_buffer(
+			&wgpu::BufferDescriptor {
+				label: Some(&format!("Index Buffer Render")),
+				size: 2_u64.pow(16),
+				usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+				mapped_at_creation: false,
 			}
-		);
+		));
+
+		let font = FontArc::try_from_slice(DEFAULT_FONT).unwrap();
+		let brush = BrushBuilder::using_font(font.clone()).build(&device, config.width, config.height, config.format);
 
 		Self {
 			surface,
@@ -177,11 +186,13 @@ impl State {
 			config,
 			size,
 			render_pipeline,
-			diffuse_texture,
-			diffuse_bind_group,
+			empty_texture,
 			vertex_buffer,
 			index_buffer,
 			shader,
+			texture_map: HashMap::new(),
+			brushes: vec!(brush),
+			font
 		}
 	}
 
@@ -190,12 +201,13 @@ impl State {
 			self.size = new_size;
 			self.config.width = new_size.x as u32;
 			self.config.height = new_size.y as u32;
-			let (diffuse_texture, texture_bind_group_layout, diffuse_bind_group) = create_texture([new_size.x, new_size.y].into() , &self.device, &self.queue);
-			self.diffuse_texture = diffuse_texture;
-			self.diffuse_bind_group = diffuse_bind_group;
+			for brush in &self.brushes {
+				brush.resize_view(self.config.width as f32, self.config.height as f32, &self.queue);
+			}
+			self.empty_texture = create_texture([new_size.x, new_size.y].into() , &self.device, &self.queue);
 			let render_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 				label: Some("Render Pipeline Layout"),
-				bind_group_layouts: &[&texture_bind_group_layout],
+				bind_group_layouts: &[&self.empty_texture.layout],
 				push_constant_ranges: &[],
 			});
 			let render_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -237,44 +249,34 @@ impl State {
 		}
 	}
 
-	pub(crate) fn render(&mut self, input: &Output<ShapeOutput>, font: &[Font; 4], image_memory: &HashMap<String, NabloImage>) -> Result<(), wgpu::SurfaceError> {
-		cfg_if::cfg_if! {
-			if #[cfg(target_arch = "wasm32")] {
-				let mut binding = draw(&input.shapes, self.size, font, image_memory);
-				let shapes = binding.get_data_u8_mut();
-				shapes.par_chunks_mut(4).for_each(|inside| {
-					let temp = inside[0];
-					inside[0] = inside[2];
-					inside[2] = temp;
-				});
-			}else {
-				let binding = draw(&input.shapes, self.size, font, image_memory);
-				let shapes = binding.get_data_u8();
-			}
-		} 
-
+	pub(crate) fn render(&mut self, input: Output<Vec<ParsedShape>>) -> Result<(), wgpu::SurfaceError> {
 		let output = self.surface.get_current_texture()?;
-		let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+		let view = output.texture.create_view(&Default::default());
+		let window_size = Vec2::new(self.config.width as f32, self.config.height as f32);
+		// clear sections
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("Render Encoder"),
+			label: Some("Render Texture Encoder"),
 		});
-		let texture_size = wgpu::Extent3d {
-			width: self.size.x as u32,
-			height: self.size.y as u32,
-			depth_or_array_layers: 1,
-		};
-		self.queue.write_texture(wgpu::ImageCopyTexture {
-			texture: &self.diffuse_texture,
-			mip_level: 0,
-			origin: wgpu::Origin3d::ZERO,
-			aspect: wgpu::TextureAspect::All,
-		}, &shapes, wgpu::ImageDataLayout {
-			offset: 0,
-			bytes_per_row: Some(self.size.x as u32 * 4),
-			rows_per_image: Some(self.size.y as u32),
-		}, texture_size);
-		// self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertexs));
-		// self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
+		// let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+		// 	label: Some("Render Pass Texture"),
+		// 	color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+		// 		view: &view,
+		// 		resolve_target: None,
+		// 		ops: wgpu::Operations {
+		// 			load: wgpu::LoadOp::Clear(wgpu::Color {
+		// 				r: 0.0,
+		// 				g: 0.0,
+		// 				b: 0.0,
+		// 				a: 0.0,
+		// 			}),
+		// 			store: wgpu::StoreOp::Store,
+		// 		},
+		// 	})],
+		// 	..Default::default()
+		// });
+		// render_pass.set_pipeline(&self.render_pipeline);
+		// render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
+		// drop(render_pass);
 
 		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 			label: Some("Render Pass"),
@@ -293,226 +295,203 @@ impl State {
 			})],
 			..Default::default()
 		});
-
 		render_pass.set_pipeline(&self.render_pipeline);
-		render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-		render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-		render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-		render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+		render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
 		drop(render_pass);
 
-		self.queue.submit(iter::once(encoder.finish()));
+		// draw process
+		let mut i = 0;
+		let mut text_count = 0;
+		for shape in input.shapes {
+			if i >= self.vertex_buffer.len() {
+				let vertex_buffer = self.device.create_buffer(
+					&wgpu::BufferDescriptor {
+						label: Some(&format!("Vertex Buffer Render")),
+						size: 2_u64.pow(16),
+						usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+						mapped_at_creation: false,
+					}
+				);
+
+				let index_buffer = self.device.create_buffer(
+					&wgpu::BufferDescriptor {
+						label: Some(&format!("Index Buffer Render")),
+						size: 2_u64.pow(16),
+						usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+						mapped_at_creation: false,
+					}
+				);
+				self.vertex_buffer.push(vertex_buffer);
+				self.index_buffer.push(index_buffer);
+			}
+
+			let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+				label: Some("Render Pass Texture"),
+				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+					view: &view,
+					resolve_target: None,
+					ops: wgpu::Operations {
+					load: wgpu::LoadOp::Load,
+					store: wgpu::StoreOp::Store,
+				},
+				})],
+				..Default::default()
+			});
+			render_pass.set_pipeline(&self.render_pipeline);
+
+			match shape {
+				ParsedShape::Vertexs { vertexs, indices, clip_area } => {
+					render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
+					let mut vertexs_process = vec!();
+					for vertex in vertexs {
+						vertexs_process.push(Vertex {
+							position: vertex.position,
+							color: vertex.color,
+							is_texture: 0,
+						})
+					}
+					self.queue.write_buffer(&self.vertex_buffer[i], 0, bytemuck::cast_slice(&vertexs_process));
+					self.queue.write_buffer(&self.index_buffer[i], 0, bytemuck::cast_slice(&indices));
+					let clip_area = Area::new((clip_area.area[0] + Vec2::same(1.0)) / 2.0 * window_size, (clip_area.area[1] + Vec2::same(1.0)) / 2.0 * window_size);
+					let clip_area = Area::new_with_origin(window_size).cross_part(&clip_area);
+					render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
+					render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
+					render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
+					render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+					i = i + 1;
+				},
+				ParsedShape::Text(text, style) => {
+					if text_count >= self.brushes.len() {
+						self.brushes.push(BrushBuilder::using_font(self.font.clone()).build(&self.device, self.config.width, self.config.height, self.config.format))
+					}
+					render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
+					let section = TextSection::default()
+						.with_screen_position((style.position.x, style.position.y))
+						.add_text(WText::new(text.text.leak()).with_color(style.fill.normalized()).with_scale(EM * CORRECTION * style.size.len() / 2_f32.sqrt()));
+					let clip_area = Area::new_with_origin(window_size).cross_part(&style.clip);
+					render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
+					self.brushes[text_count].queue(&self.device, &self.queue, vec!(section)).unwrap();
+					self.brushes[text_count].draw(&mut render_pass);
+					text_count = text_count + 1;
+				},
+				ParsedShape::Image(image, style) => {
+					if let Some(t) = self.texture_map.get(&image.id) {
+						render_pass.set_bind_group(0, &t.bind_group, &[]);
+						let mask = image.mask.unwrap_or(ShapeMask::Rect(Rect {
+							width_and_height: image.size,
+							..Default::default()
+						}));
+						let (vertexs, indices, clip_area) = mask.into_vertexs(window_size, &style);
+						let (texture_cords, _, _) = mask.into_vertexs(image.size, &Style {
+							position: Vec2::ZERO,
+							..style.clone()
+						});
+						let mut vertexs_process = vec!();
+						for i in 0..vertexs.len() {
+							vertexs_process.push(Vertex {
+								position: vertexs[i].position,
+								color: [(texture_cords[i].position[0] + 1.0) / 2.0, 1.0 - (texture_cords[i].position[1] + 1.0) / 2.0, 0.0, 0.0],
+								is_texture: 1,
+							})
+						}
+						self.queue.write_buffer(&self.vertex_buffer[i], 0, bytemuck::cast_slice(&vertexs_process));
+						self.queue.write_buffer(&self.index_buffer[i], 0, bytemuck::cast_slice(&indices));
+						let clip_area = Area::new((clip_area.area[0] + Vec2::same(1.0)) / 2.0 * window_size, (clip_area.area[1] + Vec2::same(1.0)) / 2.0 * window_size);
+						let clip_area = Area::new_with_origin(window_size).cross_part(&clip_area);
+						render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
+						render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
+						render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
+						render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+						i = i + 1;
+					}
+				},
+			};
+
+			drop(render_pass);
+
+			// if i >= self.vertex_buffer.len() {
+			// 	let vertex_buffer = self.device.create_buffer(
+			// 		&wgpu::BufferDescriptor {
+			// 			label: Some(&format!("Vertex Buffer Render")),
+			// 			size: 2_u64.pow(16),
+			// 			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+			// 			mapped_at_creation: false,
+			// 		}
+			// 	);
+
+			// 	let index_buffer = self.device.create_buffer(
+			// 		&wgpu::BufferDescriptor {
+			// 			label: Some(&format!("Index Buffer Render")),
+			// 			size: 2_u64.pow(16),
+			// 			usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+			// 			mapped_at_creation: false,
+			// 		}
+			// 	);
+			// 	self.vertex_buffer.push(vertex_buffer);
+			// 	self.index_buffer.push(index_buffer);
+			// }
+
+			// let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			// 	label: Some("Render Pass Texture"),
+			// 	color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+			// 		view: &view,
+			// 		resolve_target: None,
+			// 		ops: wgpu::Operations {
+			// 			load: wgpu::LoadOp::Load,
+			// 			store: wgpu::StoreOp::Store,
+			// 		},
+			// 	})],
+			// 	..Default::default()
+			// });
+
+			// let ver: Vec<Vertex> = clip.points().into_iter().map(|inner| {
+			// 	Vertex {
+			// 		position: [inner.x, - inner.y, 0.0],
+			// 		color: [(inner.x + 1.0) / 2.0, (inner.y + 1.0) / 2.0, 0.0, 0.0],
+			// 		is_texture: 1,
+			// 	}
+			// }).collect();
+
+			// render_pass.set_pipeline(&self.render_pipeline);
+			// render_pass.set_bind_group(0, &self.render_texture.bind_group, &[]);
+			// self.queue.write_buffer(&self.vertex_buffer[i], 0, bytemuck::cast_slice(&ver));
+			// self.queue.write_buffer(&self.index_buffer[i], 0, bytemuck::cast_slice(&INDICES));
+			// render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
+			// render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
+			// render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+			// drop(render_pass);
+
+			// i = i + 1;
+		}
+
+		if i <= self.vertex_buffer.len() {
+			let len = self.vertex_buffer.len();
+			for _ in 0..(len - i) {
+				self.vertex_buffer.pop();
+				self.index_buffer.pop();
+			}
+		}
+
+		if text_count <= self.brushes.len() {
+			let len = self.brushes.len();
+			for _ in 0..(len - text_count) {
+				self.brushes.pop();
+			}
+		}
+
+		self.queue.submit(Some(encoder.finish()));
 		output.present();
 
 		Ok(())
 	}
-}
 
-fn draw(input: &ShapeOutput, window_size: Vec2, font: &[Font; 4], image_memory: &HashMap<String, NabloImage>) -> DrawTarget {
-	let mut dt = DrawTarget::new(window_size.x as i32, window_size.y as i32);
-	for shape in &input.shapes {
-		handle_shape(&mut dt, &shape.shape, &shape.style, font, image_memory);
-	};
-	dt
-}
-
-fn handle_shape(dt: &mut DrawTarget, shape: &ShapeElement , style: &Style, fonts: &[Font; 4], image_memory: &HashMap<String, NabloImage>) {
-	dt.push_clip_rect(IntRect {
-		min: euclid::Point2D::new(style.clip.area[0].x as i32, style.clip.area[0].y as i32),
-		max: euclid::Point2D::new(style.clip.area[1].x as i32, style.clip.area[1].y as i32)
-	});
-	let transform = Transform2D::identity()
-		.then_translate(Vector2D::new(style.position.x, style.position.y))
-		.then_translate(Vector::new(-style.transform_origin.x, -style.transform_origin.y))
-		.then_rotate(Angle { radians: style.rotate })
-		.then_scale(style.size.x, style.size.y)
-		.then_translate(Vector::new(style.transform_origin.x, style.transform_origin.y));
-	if let ShapeElement::Text(t) = shape {
-		if t.text.is_empty() {
-			dt.pop_clip();
-			return;
-		}
-		let em = EM * style.size.len() / 2.0_f32.sqrt(); 
-		let mut x = style.position.x;
-		let mut line_counter = 0.0;
-		// let y_m = match fonts[0].vertical_line_metrics(em) {
-		// 	None => fonts[0].metrics('M', em).height as f32,
-		// 	Some(t) => t.new_line_size
-		// };
-		for i in 0..utf8_slice::len(&t.text) {
-			let y;
-			let width;
-			let text = utf8_slice::slice(&t.text, i, i + 1).chars().next().unwrap();
-			if text == '\n' {
-				line_counter = line_counter + 1.0;
-				x = style.position.x;
-				continue;
-			}
-			let (metrics, bitmap) = if t.text_style.is_bold {
-				if t.text_style.is_italic {
-					fonts[3].rasterize(text, em)
-				}else {
-					fonts[1].rasterize(text, em)
-				}
-			}else {
-				if t.text_style.is_italic {
-					fonts[2].rasterize(text, em)
-				}else {
-					fonts[0].rasterize(text, em)
-				}
-			};
-			// width = metrics.width as f32;
-			// y = metrics.ymin as f32 + line_counter * em + style.position.y;
-			// println!("x: {}, y: {}", x, y);
-			if (text >= '一' && text <= '龥') || text == PASSWORD  {
-				width = em * 0.8 * 1.5;
-				y = style.position.y + line_counter * em;
-			}else {
-				width = em * 0.8;
-				y = if MOVE_DOWN_LETTER.contains(&text)  {
-					style.position.y + em * 0.21
-				}else if text == ',' || text == '.' || text == '_' {
-					style.position.y + em * 0.67
-				}else if text == '=' {
-					style.position.y + em * 0.3
-				}else if text == '-' {
-					style.position.y + em * 0.45
-				}else if text == '+' {
-					style.position.y + em * 0.25
-				}else if text == '\n' {
-					line_counter = line_counter + 1.0;
-					x = style.position.x;
-					continue;
-				}else {
-					style.position.y
-				} + line_counter * em;
-			}
-			let data: Vec<u32> = bitmap.into_par_iter().map(|input| {
-				let input = (input as f32 * style.fill[3] as f32 / 255.0) as u8;
-				if input == 0 {
-					0
-				}else {
-					(input as u32) << 24 | 
-					muldiv255(input as u32, style.fill[0] as u32) << 16 | 
-					muldiv255(input as u32, style.fill[1] as u32) << 8 | 
-					muldiv255(input as u32, style.fill[2] as u32)
-				}
-			}).collect();
-			dt.draw_image_at(x, y, &Image {
-				width: metrics.width as i32,
-				height: metrics.height as i32,
-				data: &data
-			}, &DrawOptions::new());
-			// dt.draw_text(font, em, utf8_slice::slice(&t.text, i, i + 1), Point::new(x, style.position.y), 
-			// &Source::Solid(SolidSource::from_unpremultiplied_argb(style.fill[3], style.fill[0], style.fill[1], style.fill[2])), &DrawOptions::new());
-			x = x + width;
-		};
-		dt.pop_clip();
-		return;
+	pub(crate) fn insert_texture(&mut self, id: String, image: crate::texture::Image) {
+		self.texture_map.insert(id, create_texture_with_data(image.size, &self.device, &self.queue, image.rgba));
 	}
 
-	if let ShapeElement::Image(image) = shape {
-		let mask = image.mask.clone().unwrap_or_else(|| ShapeMask::Rect(Rect { width_and_height: image.get_area(style).width_and_height(), rounding: Vec2::same(0.0) }));
-		let path = parse_shape(&mask, &transform);
-		if let Some(t) = image_memory.get(&image.id) {
-			let data: Vec<u32> = t.rgba.clone().into_par_iter().chunks(4).map(|input| {
-				if input[3] == 0 {
-					0
-				}else {
-					(input[3] as u32) << 24 | 
-					muldiv255(input[3] as u32, input[0] as u32) << 16 | 
-					muldiv255(input[3] as u32, input[1] as u32) << 8 | 
-					muldiv255(input[3] as u32, input[2] as u32)
-				}
-			}).collect();
-			let transform = Transform2D::identity()
-				.then_translate(Vector::new(style.transform_origin.x, style.transform_origin.y))
-				.then_rotate(Angle { radians: style.rotate })
-				.then_scale(style.size.x, style.size.y)
-				.then_translate(Vector::new(-style.transform_origin.x, -style.transform_origin.y))
-				.then_translate(Vector2D::new(-style.position.x, -style.position.y))
-				.then_scale(t.size.x / image.size.x, t.size.y / image.size.y);
-			dt.fill(&path, &Source::Image(Image {
-				width: t.size.x as i32,
-				height: t.size.y as i32,
-				data: &data
-			}, ExtendMode::Repeat, FilterMode::Bilinear, transform), &DrawOptions::new());
-		}
-		dt.pop_clip();
-		return;
+	pub(crate) fn remove_texture(&mut self, id: &String) {
+		self.texture_map.remove(id);
 	}
-	let path = parse_shape(&shape.into_mask(), &transform);
-	
-	dt.fill(&path, &Source::Solid(SolidSource::from_unpremultiplied_argb(style.fill[3], style.fill[0], style.fill[1], style.fill[2])), &DrawOptions::new());
-	dt.stroke(&path, 
-		&Source::Solid(SolidSource::from_unpremultiplied_argb(style.stroke_color[3], style.stroke_color[0], style.stroke_color[1], style.stroke_color[2])),
-		&StrokeStyle { width: style.stroke_width, ..Default::default() }, &DrawOptions::new());
-	dt.pop_clip()
-}
-
-fn parse_shape(input: &ShapeMask, transform: &Transform) -> Path {
-	let mut pb = PathBuilder::new();
-	match input {
-		ShapeMask::Circle(cir) => {
-			pb.arc(cir.radius, cir.radius, cir.radius, 0.0, 2.0 * PI);
-			pb.close();
-			pb.finish()
-		},
-		ShapeMask::Rect(rect) => {
-			if rect.rounding == Vec2::ZERO {
-				pb.rect(0.0, 0.0, rect.width_and_height.x, rect.width_and_height.y);
-			}else {
-				let magic_number = 4.0 / 3.0 * (2.0_f32.sqrt() - 1.0);
-				pb.move_to(rect.width_and_height.x, rect.width_and_height.y - rect.rounding.y);
-				pb.cubic_to(rect.width_and_height.x, rect.width_and_height.y + (magic_number - 1.0) * rect.rounding.y,
-					rect.width_and_height.x + (magic_number - 1.0) * rect.rounding.x, rect.width_and_height.y,
-					rect.width_and_height.x - rect.rounding.x, rect.width_and_height.y);
-
-				pb.line_to(rect.rounding.x, rect.width_and_height.y);
-				pb.cubic_to((1.0 - magic_number) * rect.rounding.x, rect.width_and_height.y,
-					0.0, rect.width_and_height.y + (magic_number - 1.0) *rect.rounding.y,
-					0.0, rect.width_and_height.y - rect.rounding.y);
-
-				pb.line_to(0.0, rect.rounding.y);
-				pb.cubic_to(0.0, (1.0 - magic_number) * rect.rounding.y,
-					(1.0 - magic_number) * rect.rounding.x, 0.0,
-					rect.rounding.x, 0.0);
-
-				pb.line_to(rect.width_and_height.x - rect.rounding.x, 0.0);
-				pb.cubic_to(rect.width_and_height.x + (magic_number - 1.0) * rect.rounding.x, 0.0,
-					rect.width_and_height.x, (1.0 - magic_number) * rect.rounding.y,
-					rect.width_and_height.x, rect.rounding.y);
-				pb.line_to(rect.width_and_height.x, rect.width_and_height.y - rect.rounding.y);
-				pb.close();
-			}
-			pb.finish()
-		},
-		ShapeMask::CubicBezier(cb) => {
-			pb.move_to(cb.points[0].x, cb.points[0].y);
-			pb.cubic_to(cb.points[1].x, cb.points[1].y, cb.points[2].x, cb.points[2].y, cb.points[3].x, cb.points[3].y);
-			if cb.if_close {
-				pb.close();
-			}
-			pb.finish()
-		},
-		ShapeMask::Polygon(polygon) => {
-			for point in polygon.clone().into_iter() {
-				pb.line_to(point.x, point.y);
-			}
-			pb.line_to(polygon[0].x, polygon[0].y);
-			pb.close();
-			pb.finish()
-		},
-		ShapeMask::Line(pt) => {
-			let angle = pt.angle();
-			let points = [Vec2::polar(2.0, angle + PI / 2.0), Vec2::polar(2.0, angle - PI / 2.0), Vec2::polar(2.0, angle - PI / 2.0) + *pt, Vec2::polar(2.0, angle + PI / 2.0) + *pt, Vec2::polar(2.0, angle + PI / 2.0)];
-			for point in points {
-				pb.line_to(point.x, point.y);
-			}
-			pb.close();
-			pb.finish()
-		},
-	}.transform(&transform)
 }
 
 fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
@@ -528,7 +507,12 @@ fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
 			wgpu::VertexAttribute {
 				offset: std::mem::size_of::<[f32; 3]>() as u64,
 				shader_location: 1,
-				format: wgpu::VertexFormat::Float32x2,
+				format: wgpu::VertexFormat::Float32x4,
+			},
+			wgpu::VertexAttribute {
+				offset: std::mem::size_of::<[f32; 7]>() as u64,
+				shader_location: 2,
+				format: wgpu::VertexFormat::Uint32,
 			}
 		]
 	}
