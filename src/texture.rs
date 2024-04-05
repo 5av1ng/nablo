@@ -32,7 +32,7 @@ pub(crate) fn create_texture_with_data(size: Vec2, device: &wgpu::Device, queue:
 			mip_level_count: 1,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
-			format: wgpu::TextureFormat::Bgra8UnormSrgb,
+			format: wgpu::TextureFormat::Rgba8UnormSrgb,
 			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
 			label: Some("main_texture"),
 			view_formats: &[],
@@ -103,4 +103,24 @@ pub(crate) fn create_texture_with_data(size: Vec2, device: &wgpu::Device, queue:
 		layout: texture_bind_group_layout,
 		bind_group: diffuse_bind_group
 	}
+}
+
+#[cfg(any(feature = "manager", feature = "baseview_manager"))]
+pub(crate) fn write_texture_with_data(size: Vec2, texture: &wgpu::Texture, queue: &wgpu::Queue, data: &[u8]) {
+	let texture_size = wgpu::Extent3d {
+		width: size.x as u32,
+		height: size.y as u32,
+		depth_or_array_layers: 1,
+	};
+
+	queue.write_texture(wgpu::ImageCopyTexture {
+		texture: &texture,
+		mip_level: 0,
+		origin: wgpu::Origin3d::ZERO,
+		aspect: wgpu::TextureAspect::All,
+	}, &data, wgpu::ImageDataLayout {
+		offset: 0,
+		bytes_per_row: Some(size.x as u32 * 4),
+		rows_per_image: Some(size.y as u32),
+	}, texture_size);
 }

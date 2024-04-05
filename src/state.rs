@@ -1,3 +1,9 @@
+use fontdue::Font;
+use once_cell::sync::Lazy;
+use std::sync::Arc;
+use crate::texture::write_texture_with_data;
+use crate::prelude::ShapeElement;
+use crate::prelude::Shape;
 use nablo_shape::prelude::shape_elements::Style;
 use wgpu_text::BrushBuilder;
 use nablo_shape::prelude::shape_elements::DEFAULT_FONT;
@@ -21,6 +27,8 @@ use nablo_shape::math::Vec2;
 use pollster::FutureExt as _;
 // use raqote::*;
 use anyhow::*;
+
+static FONT: Lazy<Arc<Font>> = Lazy::new(|| {Arc::new(fontdue::Font::from_bytes(DEFAULT_FONT as &[u8], Default::default()).expect("loading font failed"))});
 
 /// a struct for using wgpu
 pub(crate) struct State {
@@ -56,12 +64,12 @@ struct Vertex {
 	is_texture: u32
 }
 
-// const VERTICES: &[Vertex] = &[
-// 	Vertex { position: [-1.0, 1.0, 0.0], color: [0.0, 0.0, 0.0, 0.0], is_texture: 1 },
-// 	Vertex { position: [-1.0, -1.0, 0.0], color: [0.0, 1.0, 0.0, 0.0], is_texture: 1 },
-// 	Vertex { position: [1.0, -1.0, 0.0], color: [1.0, 1.0, 0.0, 0.0], is_texture: 1 },
-// 	Vertex { position: [1.0, 1.0, 0.0], color: [1.0, 0.0, 0.0, 0.0], is_texture: 1 }
-// ];
+const VERTICES: &[Vertex] = &[
+	Vertex { position: [-1.0, 1.0, 0.0], color: [0.0, 0.0, 0.0, 0.0], is_texture: 1 },
+	Vertex { position: [-1.0, -1.0, 0.0], color: [0.0, 1.0, 0.0, 0.0], is_texture: 1 },
+	Vertex { position: [1.0, -1.0, 0.0], color: [1.0, 1.0, 0.0, 0.0], is_texture: 1 },
+	Vertex { position: [1.0, 1.0, 0.0], color: [1.0, 0.0, 0.0, 0.0], is_texture: 1 }
+];
 
 const INDICES: &[u32] = &[
 	0, 1, 2,
@@ -104,7 +112,7 @@ impl State {
 		let caps = surface.get_capabilities(&adapter);
 		let config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-			format: caps.formats[0],
+			format: wgpu::TextureFormat::Rgba8UnormSrgb,
 			width: size.x as u32,
 			height: size.y as u32,
 			present_mode: wgpu::PresentMode::Fifo,
@@ -257,26 +265,6 @@ impl State {
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("Render Texture Encoder"),
 		});
-		// let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-		// 	label: Some("Render Pass Texture"),
-		// 	color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-		// 		view: &view,
-		// 		resolve_target: None,
-		// 		ops: wgpu::Operations {
-		// 			load: wgpu::LoadOp::Clear(wgpu::Color {
-		// 				r: 0.0,
-		// 				g: 0.0,
-		// 				b: 0.0,
-		// 				a: 0.0,
-		// 			}),
-		// 			store: wgpu::StoreOp::Store,
-		// 		},
-		// 	})],
-		// 	..Default::default()
-		// });
-		// render_pass.set_pipeline(&self.render_pipeline);
-		// render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
-		// drop(render_pass);
 
 		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 			label: Some("Render Pass"),
@@ -401,67 +389,13 @@ impl State {
 						render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
 						render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
 						render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
-						render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+						render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
 						i = i + 1;
 					}
 				},
 			};
 
 			drop(render_pass);
-
-			// if i >= self.vertex_buffer.len() {
-			// 	let vertex_buffer = self.device.create_buffer(
-			// 		&wgpu::BufferDescriptor {
-			// 			label: Some(&format!("Vertex Buffer Render")),
-			// 			size: 2_u64.pow(16),
-			// 			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-			// 			mapped_at_creation: false,
-			// 		}
-			// 	);
-
-			// 	let index_buffer = self.device.create_buffer(
-			// 		&wgpu::BufferDescriptor {
-			// 			label: Some(&format!("Index Buffer Render")),
-			// 			size: 2_u64.pow(16),
-			// 			usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-			// 			mapped_at_creation: false,
-			// 		}
-			// 	);
-			// 	self.vertex_buffer.push(vertex_buffer);
-			// 	self.index_buffer.push(index_buffer);
-			// }
-
-			// let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			// 	label: Some("Render Pass Texture"),
-			// 	color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-			// 		view: &view,
-			// 		resolve_target: None,
-			// 		ops: wgpu::Operations {
-			// 			load: wgpu::LoadOp::Load,
-			// 			store: wgpu::StoreOp::Store,
-			// 		},
-			// 	})],
-			// 	..Default::default()
-			// });
-
-			// let ver: Vec<Vertex> = clip.points().into_iter().map(|inner| {
-			// 	Vertex {
-			// 		position: [inner.x, - inner.y, 0.0],
-			// 		color: [(inner.x + 1.0) / 2.0, (inner.y + 1.0) / 2.0, 0.0, 0.0],
-			// 		is_texture: 1,
-			// 	}
-			// }).collect();
-
-			// render_pass.set_pipeline(&self.render_pipeline);
-			// render_pass.set_bind_group(0, &self.render_texture.bind_group, &[]);
-			// self.queue.write_buffer(&self.vertex_buffer[i], 0, bytemuck::cast_slice(&ver));
-			// self.queue.write_buffer(&self.index_buffer[i], 0, bytemuck::cast_slice(&INDICES));
-			// render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
-			// render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
-			// render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
-			// drop(render_pass);
-
-			// i = i + 1;
 		}
 
 		if i <= self.vertex_buffer.len() {
@@ -478,6 +412,177 @@ impl State {
 				self.brushes.pop();
 			}
 		}
+
+		self.queue.submit(Some(encoder.finish()));
+		output.present();
+
+		Ok(())
+	}
+
+	pub(crate) fn soft_render(&mut self, input: Output<Vec<Shape>>) -> Result<(), wgpu::SurfaceError> {
+		let output = self.surface.get_current_texture()?;
+		let view = output.texture.create_view(&Default::default());
+		let window_size = Vec2::new(self.config.width as f32, self.config.height as f32);
+
+		fn parse_shape(shape: &ShapeMask, style: &Style) -> tiny_skia::Path {
+			let mut pb = tiny_skia::PathBuilder::new();
+
+			match shape {
+				ShapeMask::Circle(inner) => {
+					pb.push_circle(inner.radius, inner.radius, inner.radius);
+				},
+				ShapeMask::Rect(inner) => {
+					if inner.rounding == Vec2::ZERO {
+						pb.push_rect(tiny_skia::Rect::from_ltrb(0.0,0.0,inner.width_and_height.x, inner.width_and_height.y).unwrap());
+					}else {
+						let magic_number = 4.0 / 3.0 * (2.0_f32.sqrt() - 1.0);
+						pb.move_to(inner.width_and_height.x, inner.width_and_height.y - inner.rounding.y);
+						pb.cubic_to(inner.width_and_height.x, inner.width_and_height.y + (magic_number - 1.0) * inner.rounding.y,
+							inner.width_and_height.x + (magic_number - 1.0) * inner.rounding.x, inner.width_and_height.y,
+							inner.width_and_height.x - inner.rounding.x, inner.width_and_height.y);
+
+						pb.line_to(inner.rounding.x, inner.width_and_height.y);
+						pb.cubic_to((1.0 - magic_number) * inner.rounding.x, inner.width_and_height.y,
+							0.0, inner.width_and_height.y + (magic_number - 1.0) *inner.rounding.y,
+							0.0, inner.width_and_height.y - inner.rounding.y);
+
+						pb.line_to(0.0, inner.rounding.y);
+						pb.cubic_to(0.0, (1.0 - magic_number) * inner.rounding.y,
+							(1.0 - magic_number) * inner.rounding.x, 0.0,
+							inner.rounding.x, 0.0);
+
+						pb.line_to(inner.width_and_height.x - inner.rounding.x, 0.0);
+						pb.cubic_to(inner.width_and_height.x + (magic_number - 1.0) * inner.rounding.x, 0.0,
+							inner.width_and_height.x, (1.0 - magic_number) * inner.rounding.y,
+							inner.width_and_height.x, inner.rounding.y);
+						pb.line_to(inner.width_and_height.x, inner.width_and_height.y - inner.rounding.y);
+						pb.close();
+					}
+				},
+				ShapeMask::CubicBezier(inner) => {
+					pb.move_to(inner.points[0].x, inner.points[0].y);
+					pb.cubic_to(inner.points[1].x, inner.points[1].y, inner.points[2].x, inner.points[2].y, inner.points[3].x, inner.points[3].y);
+					if inner.if_close {
+						pb.close();
+					}
+				},
+				ShapeMask::Line(inner) => {
+					pb.line_to(inner.x, inner.y);
+				},
+				ShapeMask::Polygon(inner) => {
+					let mut started = false;
+					for point in &inner.points {
+						if !started {
+							pb.move_to(point.x, point.y);
+							started = true;
+							continue;
+						}
+						pb.line_to(point.x, point.y);
+					}
+					pb.close();
+				},
+			}
+			let path = pb.finish().unwrap();
+
+			let transform = tiny_skia::Transform::identity()
+				.post_translate(style.position.x, style.position.y)
+				.post_translate(-style.transform_origin.x, -style.transform_origin.y)
+				.post_rotate(style.rotate / std::f32::consts::PI * 180.0)
+				.post_scale(style.size.x, style.size.y)
+				.post_translate(style.transform_origin.x, style.transform_origin.y);
+
+			path.transform(transform).unwrap()
+		}
+
+		let mut pixmap = tiny_skia::Pixmap::new(window_size.x as u32, window_size.y as u32).unwrap();
+
+		for shape in input.shapes {
+			let mut mask = tiny_skia::Mask::new(window_size.x as u32, window_size.y as u32).unwrap();
+			let mut pb = tiny_skia::PathBuilder::new();
+			pb.push_rect(tiny_skia::Rect::from_ltrb(shape.style.clip.area[0].x, shape.style.clip.area[0].y, shape.style.clip.area[1].x, shape.style.clip.area[1].y).unwrap());
+			let clip = pb.finish().unwrap();
+			mask.fill_path(&clip, tiny_skia::FillRule::EvenOdd, true, Default::default());
+			match shape.shape {
+				ShapeElement::Text(inner) => {
+					let transform = tiny_skia::Transform::identity()
+						.post_translate(shape.style.position.x, shape.style.position.y)
+						.post_translate(-shape.style.transform_origin.x, -shape.style.transform_origin.y)
+						.post_rotate(shape.style.rotate / std::f32::consts::PI * 180.0)
+						.post_scale(shape.style.size.x, shape.style.size.y)
+						.post_translate(shape.style.transform_origin.x, shape.style.transform_origin.y);
+					let em = EM * shape.style.size.len() / 2.0_f32.sqrt() * CORRECTION;
+					let fonts = &[FONT.clone()];
+					let mut layout = fontdue::layout::Layout::new(fontdue::layout::CoordinateSystem::PositiveYDown);
+					layout.reset(&Default::default());
+					layout.append(fonts, &fontdue::layout::TextStyle::new(&inner.text, em, 0));
+					let glyphs = layout.glyphs();
+					for glyph in glyphs {
+						let (metrics, image_data) = FONT.rasterize(glyph.parent, em);
+						if image_data.len() == 0 {
+							continue
+						}
+						let mut data = vec!();
+						for image_data in image_data {
+							data.push(((image_data as f32 * shape.style.fill[0] as f32) / 255.0) as u8);
+							data.push(((image_data as f32 * shape.style.fill[1] as f32) / 255.0) as u8);
+							data.push(((image_data as f32 * shape.style.fill[2] as f32) / 255.0) as u8);
+							data.push(((image_data as f32 * shape.style.fill[3] as f32) / 255.0) as u8);
+						}
+						let slice = data.as_slice();
+						let map = tiny_skia::PixmapRef::from_bytes(slice, metrics.width as u32, metrics.height as u32).unwrap();
+						pixmap.draw_pixmap(glyph.x as i32, glyph.y as i32, map, &Default::default(), transform, Some(&mask))
+					}
+				},
+				ShapeElement::Image(_) => {},
+				_ => {
+					let path = parse_shape(&shape.shape.into_mask(), &shape.style);
+					let mut paint = tiny_skia::Paint::default();
+					paint.set_color_rgba8(shape.style.fill[0], shape.style.fill[1], shape.style.fill[2], shape.style.fill[3]);
+					paint.anti_alias = false;
+
+					pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, Default::default(), Some(&mask));
+
+					if shape.style.stroke_width > 0.0 && shape.style.stroke_color[3] != 0 {
+						paint.set_color_rgba8(shape.style.fill[0], shape.style.fill[1], shape.style.fill[2], shape.style.fill[3]);
+						pixmap.stroke_path(&path, &paint, &tiny_skia::Stroke { width: shape.style.stroke_width, ..Default::default() }, Default::default(), Some(&mask));
+					}
+				}
+			}
+		};
+
+		write_texture_with_data(window_size, &self.empty_texture.texture, &self.queue, pixmap.data());
+
+		// clear sections
+		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("Render Texture Encoder"),
+		});
+
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			label: Some("Render Pass"),
+			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				view: &view,
+				resolve_target: None,
+				ops: wgpu::Operations {
+					load: wgpu::LoadOp::Clear(wgpu::Color {
+						r: (input.background_color[0] as f64 / 255.0).powf(2.2),
+						g: (input.background_color[1] as f64 / 255.0).powf(2.2),
+						b: (input.background_color[2] as f64 / 255.0).powf(2.2),
+						a: (input.background_color[3] as f64 / 255.0).powf(2.2),
+					}),
+					store: wgpu::StoreOp::Store,
+				},
+			})],
+			..Default::default()
+		});
+		render_pass.set_pipeline(&self.render_pipeline);
+		render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
+
+		self.queue.write_buffer(&self.vertex_buffer[0], 0, bytemuck::cast_slice(&VERTICES));
+		self.queue.write_buffer(&self.index_buffer[0], 0, bytemuck::cast_slice(&INDICES));
+		render_pass.set_vertex_buffer(0, self.vertex_buffer[0].slice(..));
+		render_pass.set_index_buffer(self.index_buffer[0].slice(..), wgpu::IndexFormat::Uint32);
+		render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+		drop(render_pass);
 
 		self.queue.submit(Some(encoder.finish()));
 		output.present();

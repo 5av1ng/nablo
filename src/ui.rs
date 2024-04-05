@@ -427,16 +427,16 @@ impl Ui {
 				self.input_state.input_text = text.to_string();
 			}
 			Event::TouchStart(touch) => {
-				self.input_state.touch.insert(touch.id, (touch.clone(), false));
+				self.input_state.touch.insert(touch.id, TouchState { touch: touch.clone(), ..Default::default() });
 			}
 			Event::TouchMove(touch) => {
-				self.input_state.touch.insert(touch.id, (touch.clone(), false));
+				self.input_state.touch.insert(touch.id, TouchState { touch: touch.clone(), ..Default::default() });
 			}
 			Event::TouchEnd(touch) => {
-				self.input_state.touch.insert(touch.id, (touch.clone(), false));
+				self.input_state.touch.insert(touch.id, TouchState { touch: touch.clone(), ..Default::default() });
 			}
 			Event::TouchCancel(touch) => {
-				self.input_state.touch.insert(touch.id, (touch.clone(), false));
+				self.input_state.touch.insert(touch.id, TouchState { touch: touch.clone(), ..Default::default() });
 			},
 			Event::Scroll(scroll) => self.input_state.current_scroll = *scroll,
 			Event::ImeEnable => self.input_state.is_ime_on = true,

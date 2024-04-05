@@ -389,12 +389,14 @@ pub struct Slider<'a, T: Num> {
 /// a value can be draggable. TODO: text input
 pub struct DragableValue<'a, T: Num> {
 	input: &'a mut T,
+	from: T,
+	to: T,
+	is_logarithmic: bool,
 	step: f64,
 	speed: f64,
 	text: Text,
 	prefix: String,
 	suffix: String,
-	non_negative: bool
 }
 
 /// easy as it should be

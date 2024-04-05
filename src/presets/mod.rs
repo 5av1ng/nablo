@@ -5,7 +5,7 @@ use crate::prelude::*;
 use crate::Ui;
 use anyhow::*;
 
-/// display a tree of your struct
+/// display a tree of your struct.
 pub fn settings<'a, T: serde::Serialize + serde::Deserialize<'a>>(input: &mut T, id: impl Into<String>, ui: &mut Ui) -> Result<()> {
 	let id = id.into();
 	let mut data = to_data(input)?;
@@ -13,6 +13,17 @@ pub fn settings<'a, T: serde::Serialize + serde::Deserialize<'a>>(input: &mut T,
 	*input = from_data(&mut data)?;
 
 	Ok(())
+}
+
+/// display a tree of your struct, returns what was changed, only available for numeric values.
+pub fn settings_with_delta<'a, T: serde::Serialize + serde::Deserialize<'a>>(input: &mut T, id: impl Into<String>, ui: &mut Ui) -> Result<HashMap<String, f64>> {
+	let id = id.into();
+	let mut data = to_data(input)?;
+	let input_backup: T = from_data(&mut data.clone())?;
+	setting_inner(&mut data, id, ui);
+	*input = from_data(&mut data)?;
+
+	Ok(caculate_delta(input, &input_backup)?)
 }
 
 fn setting_inner(input: &mut ParsedData, id: String, ui: &mut Ui) {
@@ -32,8 +43,8 @@ fn setting_inner(input: &mut ParsedData, id: String, ui: &mut Ui) {
 		},
 		DataEnum::Map(map) => {
 			let (mut inner1, mut inner2) = *map.clone();
-			setting_inner(&mut inner1, id.clone() + "1", ui);
-			setting_inner(&mut inner2, id + "2", ui);
+			setting_inner(&mut inner1, id.clone() + "key", ui);
+			setting_inner(&mut inner2, id + "value", ui);
 			*map = Box::new((inner1, inner2));
 		},
 		DataEnum::Enum(enum_string, node) => {
@@ -54,8 +65,8 @@ fn setting_inner(input: &mut ParsedData, id: String, ui: &mut Ui) {
 				ui.single_input(inner);
 			});
 		},
-		DataEnum::Int(num, non_neg) => {
-			ui.add(DragableValue::new(num).non_negative(!*non_neg).set_text(name.clone()));
+		DataEnum::Int(num, range) => {
+			ui.add(DragableValue::new(num).range(range.clone()).set_text(name.clone()));
 		},
 		DataEnum::Float(num) => {
 			ui.add(DragableValue::new(num).set_text(name.clone()));

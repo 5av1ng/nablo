@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use crate::prelude::Text;
 use crate::widgets::Num;
 use crate::prelude::DragableValue;
@@ -19,11 +20,13 @@ impl<'a, T: Num> DragableValue<'a, T> {
 		Self {
 			text: "".into(),
 			input,
+			from: T::from_f64(f64::NEG_INFINITY),
+			to: T::from_f64(f64::INFINITY),
+			is_logarithmic: false,
 			step: 1.0,
 			speed: 1.0,
 			suffix: "".into(),
 			prefix: "".into(),
-			non_negative: false
 		}
 	}
 
@@ -51,18 +54,27 @@ impl<'a, T: Num> DragableValue<'a, T> {
 		}
 	}
 
-	/// set prefix to dragable value
-	pub fn prefix(self,prefix: impl Into<String>) -> Self {
+	/// set range to slider
+	pub fn range(self, range: RangeInclusive<T>) -> Self {
 		Self {
-			prefix: prefix.into(),
+			from: range.start().clone(),
+			to: range.end().clone(),
 			..self
 		}
 	}
 
-	/// set if this dragable value can contains negative value
-	pub fn non_negative(self, non_negative: bool) -> Self {
+	/// set slider to logarithmic
+	pub fn logarithmic(self, is_logarithmic: bool) -> Self {
 		Self {
-			non_negative,
+			is_logarithmic,
+			..self
+		}
+	}
+
+	/// set prefix to dragable value
+	pub fn prefix(self,prefix: impl Into<String>) -> Self {
+		Self {
+			prefix: prefix.into(),
 			..self
 		}
 	}
@@ -71,15 +83,32 @@ impl<'a, T: Num> DragableValue<'a, T> {
 impl<T: Num> Widget for DragableValue<'_, T> {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
 		// logic
+		let from = self.from.to_f64();
+		let to = self.to.to_f64();
 		let step = self.step.to_f64();
 		let speed = self.speed.to_f64();
+		let compress = |input: f64| -> f64 {
+			if input > to {
+				to
+			}else if input < from {
+				from
+			}else {
+				input
+			}
+		};
 		let drag_delta = response.drag_delta().x;
-		let change = drag_delta as f64 * speed;
-		let mut input = ((self.input.to_f64() + change) / step).round() * step;
-		if self.non_negative && input < 0.0 {
-			input = 0.0;
-		}
-		*self.input = T::from_f64(input);
+		let input = if from.is_infinite() || to.is_infinite() {
+			let change = drag_delta as f64 * speed;
+			((self.input.to_f64() + change) / step).round() * step
+		}else {
+			if self.is_logarithmic {
+				(drag_delta as f64 * speed * (to.ln() - from.ln()) + self.input.to_f64().ln()).exp()
+			}else {
+				let change = drag_delta as f64 * speed;
+				((self.input.to_f64() + change) / step).round() * step
+			}
+		};
+		*self.input = T::from_f64(compress(input));
 
 		// animation caculate
 		let animation_time = Duration::milliseconds(250);

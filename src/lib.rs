@@ -132,12 +132,16 @@ cfg_if::cfg_if!{
 			pub fullscreen: bool,
 			pub icon: Option<(Vec<u8>,Vec2)>,
 			pub control_flow: ControlFlow,
+			pub soft_rendering: bool,
 		}
 
 		/// a trait for your app
 		pub trait App {
 			/// where you add widgets
 			fn app(&mut self, ui: &mut Ui);
+			#[cfg(target_os = "android")]
+			/// you may want handle android main when in android platform, this will run before actually running window manage process.
+			fn android_app(&mut self, app: prelude::AndroidApp);
 		}
 
 		/// your handle to nablo
@@ -291,13 +295,21 @@ pub struct InputState {
 	click_time: HashMap<MouseButton, Instant>,
 	is_ime_on: bool,
 	current_scroll: Vec2,
-	touch: HashMap<usize, (Touch, bool)>,
+	touch: HashMap<usize, TouchState>,
 	input_text: String,
 }
 
 #[derive(PartialEq, Clone)]
 struct MouseState {
 	button: MouseButton,
+	is_drag_used: bool,
+	is_click_used: bool
+}
+
+#[derive(PartialEq, Clone)]
+#[derive(Default)]
+struct TouchState {
+	touch: Touch,
 	is_drag_used: bool,
 	is_click_used: bool
 }
