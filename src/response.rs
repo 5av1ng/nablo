@@ -241,7 +241,7 @@ impl DragInfo {
 				}
 			};
 			if is_any_inside {
-				if input_state.is_any_mouse_pressed() && !self.is_draging {
+				if (input_state.is_any_mouse_pressed() || input_state.is_any_touch_pressed()) && !self.is_draging {
 					for inner in &mut input_state.pressed_mouse {
 						if !inner.is_drag_used {
 							self.drag_start_time = Some(Instant::now());

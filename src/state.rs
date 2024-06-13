@@ -467,7 +467,7 @@ impl State {
 					}
 				},
 				ShapeMask::Line(inner) => {
-					pb.line_to(inner.x, inner.y);
+					pb.cubic_to(0.0, 0.0, inner.x, inner.y, inner.x, inner.y);
 				},
 				ShapeMask::Polygon(inner) => {
 					let mut started = false;

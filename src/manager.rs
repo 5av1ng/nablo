@@ -409,9 +409,6 @@ impl Default for Settings {
 			fullscreen: false,
 			icon: None,
 			control_flow: ControlFlow::Poll,
-			#[cfg(target_os = "android")]
-			soft_rendering: true,
-			#[cfg(not(target_os = "android"))]
 			soft_rendering: false,
 		}
 	}

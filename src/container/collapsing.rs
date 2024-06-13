@@ -148,7 +148,7 @@ impl Container for Collapsing {
 			}
 		}else {
 			0.0
-		} * std::f32::consts::PI * 0.5;
+		} * 90.0;
 
 		// paint
 		if let None = self.icon {
