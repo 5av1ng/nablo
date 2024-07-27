@@ -8,9 +8,11 @@ use crate::widgets::Canvas;
 
 impl Widget for Canvas {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
+		painter.set_transform_origin(response.area.area[0]);
 		self.painter.change_layer(painter.style().layer);
-		self.painter.move_delta_to(response.area.left_top());
+		self.painter.move_by(response.area.left_top());
 		self.painter.change_clip(ui.window_crossed().shrink(Vec2::same(ui.style().space)).cross_part(&response.area));
+		self.painter.scale_factor(painter.style().scale_factor);
 		*painter = self.painter.clone();
 	}
 

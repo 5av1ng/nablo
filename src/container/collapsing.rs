@@ -50,7 +50,7 @@ impl Collapsing {
 		let id = ui.container_id(self);
 		let temp = CollapsingTemp {
 			is_open,
-			..ui.memory_read(&id).unwrap_or(CollapsingTemp::default())
+			..ui.memory_read(&id).unwrap_or_default()
 		};
 		ui.memory_save(&id, temp);
 	}
@@ -96,7 +96,7 @@ impl Container for Collapsing {
 		ui.painter().style().layer
 	}
 
-	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &String) -> bool {
+	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &str) -> bool {
 		// logic
 		let mut temp: CollapsingTemp = ui.memory_read(id).unwrap_or(CollapsingTemp{
 			is_open: self.default_open,
@@ -111,9 +111,10 @@ impl Container for Collapsing {
 		let width_and_height = Vec2::new(text_area.width_and_height().x + icon_area.width_and_height().x, 
 			*[text_area.width_and_height().y, icon_area.width_and_height().y, ui.style().space].iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap());
 		let area = Area::new(response.area.left_top(), response.area.left_top() + width_and_height);
+		let scaled_area = Area::new(area.area[0] * painter.style().scale_factor, area.area[1] * painter.style().scale_factor);
 		if ui.input().is_any_mouse_released() {
 			if let Some(t) = ui.input().cursor_position() {
-				if area.is_point_inside(&t) {
+				if scaled_area.is_point_inside(&t) {
 					temp.change_time.push(Instant::now());
 					temp.is_open = !temp.is_open;
 				}
@@ -130,9 +131,9 @@ impl Container for Collapsing {
 		let rotate = if temp.change_time.len() == 2 {
 			let delta = temp.change_time[0].elapsed() - temp.change_time[1].elapsed();
 			let calc = if delta > animation_time {
-				animation.caculate(&temp.change_time[1].elapsed()).unwrap_or_else(|| 1.0)
+				animation.caculate(&temp.change_time[1].elapsed()).unwrap_or(1.0)
 			}else {
-				animation.caculate(&(delta + temp.change_time[1].elapsed())).unwrap_or_else(|| 1.0)
+				animation.caculate(&(delta + temp.change_time[1].elapsed())).unwrap_or(1.0)
 			};
 			if temp.is_open {
 				calc
@@ -140,7 +141,7 @@ impl Container for Collapsing {
 				1.0 - calc
 			}
 		}else if temp.change_time.len() == 1 {
-			let calc = animation.caculate(&temp.change_time[0].elapsed()).unwrap_or_else(|| 1.0);
+			let calc = animation.caculate(&temp.change_time[0].elapsed()).unwrap_or(1.0);
 			if temp.is_open {
 				calc
 			}else {
@@ -151,7 +152,7 @@ impl Container for Collapsing {
 		} * 90.0;
 
 		// paint
-		if let None = self.icon {
+		if self.icon.is_none() {
 			let mut icon = Painter::default();
 			icon.paint_area = Area::new(Vec2::ZERO, Vec2::same(16.0));
 			icon.set_clip(Area::new(Vec2::ZERO, Vec2::same(16.0)));
@@ -163,10 +164,11 @@ impl Container for Collapsing {
 		let icon_area = icon.paint_area;
 		let position = area.area[0] + Vec2::new(0.0, (area.height() - icon_area.height()) / 2.0);
 		icon.change_transform_origin(icon_area.center());
-		icon.move_delta_to(position);
+		icon.move_by(position);
 		icon.change_clip(painter.style().clip);
 		icon.change_rotate(rotate);
 		icon.change_layer(painter.style().layer);
+		icon.scale_factor(painter.style().scale_factor);
 		painter.append(&mut icon);
 
 		let text_area = self.text.text_area(painter);
@@ -178,7 +180,7 @@ impl Container for Collapsing {
 		temp.is_open
 	}
 
-	fn end<R>(&mut self, ui: &mut Ui, _: &mut Painter, inner_response: &InnerResponse<R>, id: &String) {
+	fn end<R>(&mut self, ui: &mut Ui, _: &mut Painter, inner_response: &InnerResponse<R>, id: &str) {
 		let mut temp: CollapsingTemp = ui.memory_read(id).unwrap();
 		if temp.is_open {
 			let mut area = Area::ZERO;

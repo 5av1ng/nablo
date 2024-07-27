@@ -11,7 +11,7 @@ impl Label {
 	/// create a new lable
 	pub fn new(text: impl Into<Text>) -> Self {
 		Self {
-			text: text.into()
+			text: text.into().text.replace('\n', "").into(),
 		}
 	}
 }

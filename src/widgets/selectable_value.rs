@@ -1,3 +1,4 @@
+use crate::prelude::Status;
 use crate::Instant;
 use nablo_shape::prelude::shape_elements::Color;
 use crate::widgets::TextSetting;
@@ -22,7 +23,7 @@ impl SelectableValue {
 	/// get a selectable value with text
 	pub fn new(select: bool, text: impl Into<Text>) -> Self {
 		Self {
-			select: select,
+			select,
 			text: text.into(),
 			..Default::default()
 		}
@@ -45,6 +46,14 @@ impl SelectableValue {
 		!self.painter.is_empty()
 	}
 
+	/// set status for a selectable value
+	pub fn status(self, status: Status) -> Self {
+		Self {
+			status,
+			..self
+		}
+	}
+
 	/// set padding of each element
 	pub fn set_padding(self, padding: f32) -> Self {
 		Self {
@@ -56,8 +65,13 @@ impl SelectableValue {
 
 impl Widget for SelectableValue {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
+		painter.set_transform_origin(response.area.area[0]);
 		let space = self.space.unwrap_or(ui.style().space);
-		let background_color = ui.style().primary_color;
+		let background_color = if let Status::Default = self.status {
+			ui.style().primary_color
+		}else {
+			self.status.into_color(ui)
+		};
 		self.painter.change_layer(painter.style().layer);
 		// hover animation
 		let animation_time = Duration::milliseconds(250);
@@ -65,15 +79,15 @@ impl Widget for SelectableValue {
 		let light_factor = if let Some(lost_hover_time) = response.lost_hovering_time() {
 			if let Some(hover_time) = response.hovering_time(){
 				if hover_time - lost_hover_time > animation_time {
-					1.0 - animation.caculate(&lost_hover_time).unwrap_or_else(|| 1.0)
+					1.0 - animation.caculate(&lost_hover_time).unwrap_or(1.0)
 				}else {
-					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or_else(|| 0.0)
+					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or(0.0)
 				}
 			}else {
 				0.0
 			}
 		}else if let Some(hover_time) = response.hovering_time() {
-			animation.caculate(&hover_time).unwrap_or_else(|| 1.0)
+			animation.caculate(&hover_time).unwrap_or(1.0)
 		}else {
 			0.0
 		} * ui.style().brighten_factor;
@@ -94,9 +108,9 @@ impl Widget for SelectableValue {
 			alpha = if memory.change_time.len() == 2 {
 				let delta = memory.change_time[0].elapsed() - memory.change_time[1].elapsed();
 				let calc = if delta > animation_time {
-					animation.caculate(&memory.change_time[1].elapsed()).unwrap_or_else(|| 1.0)
+					animation.caculate(&memory.change_time[1].elapsed()).unwrap_or(1.0)
 				}else {
-					animation.caculate(&(delta + memory.change_time[1].elapsed())).unwrap_or_else(|| 1.0)
+					animation.caculate(&(delta + memory.change_time[1].elapsed())).unwrap_or(1.0)
 				};
 				if self.select {
 					calc
@@ -104,19 +118,17 @@ impl Widget for SelectableValue {
 					1.0 - calc
 				}
 			}else if memory.change_time.len() == 1 {
-				let calc = animation.caculate(&memory.change_time[0].elapsed()).unwrap_or_else(|| 1.0);
+				let calc = animation.caculate(&memory.change_time[0].elapsed()).unwrap_or(1.0);
 				if self.select {
 					calc
 				}else {
 					1.0 - calc
 				}
 			}
-			else {
-				if self.select {
-					1.0
-				}else {
-					0.0
-				}
+			else if self.select {
+				1.0
+			}else {
+				0.0
 			};
 		}else {
 			ui.memory_save(&response.id, SelectableValueTemp {
@@ -126,14 +138,22 @@ impl Widget for SelectableValue {
 			alpha = 0.0;
 		}
 
+		if self.text.color.is_none() {
+			self.text.color = Some(if background_color.difference(&Color::from(1.0)) > background_color.difference(&Color::from(0.0)) {
+				1.0.into()
+			}else {
+				(1.0 - alpha).into()
+			});
+		}
+
 		// actual draw
-		painter.set_color(ui.style().background_color.brighter(0.15) + alpha * (background_color - ui.style().background_color.brighter(0.15)));
+		painter.set_color(ui.style().card_color.brighter(0.1) + alpha * (background_color - ui.style().card_color.brighter(0.1)));
 		painter.set_position(response.area.area[0]);
 		painter.rect(response.area.width_and_height(), Vec2::same(5.0));
 
 		let icon_area = self.painter.paint_area;
 		let position = response.area.area[0] + Vec2::new(space * 0.5, (response.area.height() - icon_area.height()) / 2.0);
-		self.painter.move_delta_to(position);
+		self.painter.move_by(position);
 		self.painter.change_clip(painter.style().clip);
 		painter.append(&mut self.painter);
 

@@ -1,5 +1,6 @@
 //! widgets provided by `nablo`
 
+use crate::prelude::TooltipProvider;
 use crate::prelude::message_provider::Message;
 use crate::prelude::Collapsing;
 use nablo_shape::prelude::shape_elements::TextStyle;
@@ -20,15 +21,18 @@ mod single_input;
 mod slider;
 mod dragable_value;
 mod divide_line;
+mod progress_bar;
 
 /// a general style used by all wigets
 #[derive(Clone)]
 pub struct Style {
 	pub background_color: Color,
+	pub card_color: Color,
+	pub seprator_color: Color,
+	pub slider_peek_color: Color,
+	pub slider_unreached_color: Color,
+	pub slider_reached_color: Color,
 	pub primary_color: Color,
-	pub secondary_color: Color,
-	pub tertiary_color: Color,
-	pub quaternary_color: Color,
 	pub text_color: Color,
 	pub error_color: Color,
 	pub info_color: Color,
@@ -41,16 +45,18 @@ pub struct Style {
 impl Default for Style {
 	fn default() -> Self { 
 		Self {
-			background_color: [4,6,27,255].into(),
-			primary_color: [49,52,150,255].into(),
-			secondary_color: [128,0,174,255].into(),
-			tertiary_color: [64,7,11,255].into(),
-			quaternary_color: [119,136,153,255].into(),
-			text_color: [255,255,255,255].into(),
-			error_color: [220,20,60,255].into(),
-			info_color: [0,70,209,255].into(),
-			warning_color: [242,201,125,255].into(),
-			success_color: [36,56,32,255].into(),
+			background_color: [18,18,18,255].into(),
+			card_color: [30, 30, 30, 255].into(),
+			seprator_color: [51,51,51, 255].into(),
+			slider_peek_color: [118,118,118, 255].into(),
+			slider_reached_color: [97,97,97, 255].into(),
+			slider_unreached_color: [200, 200, 200, 255].into(),
+			primary_color: [98,0,234, 255].into(),
+			text_color: [230,230,230,255].into(),
+			error_color: [229, 115, 115,255].into(),
+			info_color: [100, 181, 246,255].into(),
+			warning_color: [255, 235, 59,255].into(),
+			success_color: [111,249,6 ,255].into(),
 			space: EM,
 			brighten_factor: 0.1,
 		}
@@ -58,7 +64,7 @@ impl Default for Style {
 }
 
 /// nablo build-in status, should be enough to use. i think...
-#[derive(Default, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Default, Clone, serde::Deserialize, serde::Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Status {
 	Error,
@@ -68,17 +74,25 @@ pub enum Status {
 	#[default] Default
 }
 
+#[derive(Default, Clone, serde::Deserialize, serde::Serialize, Debug, PartialEq)]
+/// nablo build-in button's style
+pub enum ButtonStyle {
+	#[default] Normal,
+	Stroked,
+	Lined
+}
+
 /// a text used by all build-in wigets, contains some basic style settings
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub struct Text {
 	pub text: String,
-	status: Status,
-	color: Option<Color>,
-	size: Vec2,
-	width: Option<f32>,
-	height: Option<f32>,
-	underline: bool,
-	style: TextStyle
+	pub status: Status,
+	pub color: Option<Color>,
+	pub size: Vec2,
+	pub width: Option<f32>,
+	pub height: Option<f32>,
+	pub underline: bool,
+	pub style: TextStyle
 }
 
 impl Default for Text {
@@ -190,9 +204,9 @@ impl TextSetting for Text {
 	}
 
 	fn text_draw(&self, painter: &mut Painter, position_given: Vec2, ui: &mut Ui) {
-		let scale = painter.style().size.clone();
-		let position = painter.style().position.clone();
-		let color = painter.style().fill.color;
+		let scale = painter.style().size;
+		let position = painter.style().position;
+		let color = painter.style().fill;
 		let text_style = painter.text_style().clone();
 		painter.set_text_style(self.style.clone());
 		painter.set_color(self.get_color(ui));
@@ -221,7 +235,7 @@ impl TextSetting for Text {
 	}
 
 	fn text_area(&self, painter: &mut Painter) -> Area {
-		let scale = painter.style().size.clone();
+		let scale = painter.style().size;
 		painter.set_scale(self.size);
 		let back = painter.text_area(self.text.clone());
 		painter.set_scale(scale);
@@ -267,7 +281,7 @@ impl<T> From<T> for Text where
 /// # use nablo::prelude::Button;
 /// # let mut ui = nablo::Ui::default();
 /// if ui.add(Button::new("Hello World")).is_clicked() {
-///		println!("Hello World!");
+///     println!("Hello World!");
 /// }
 /// ```
 #[derive(Default)]
@@ -275,6 +289,8 @@ pub struct Button {
 	text: Text,
 	painter: Painter,
 	space: Option<f32>,
+	status: Status,
+	style: ButtonStyle
 }
 
 impl Status {
@@ -299,7 +315,7 @@ impl Status {
 /// # let mut ui = nablo::Ui::default();
 /// // just draw a rectangle
 /// ui.add(Canvas::new(Vec2::new(200.0, 100.0), |painter| {
-///		painter.rect(Vec2::new(200.0, 100.0), Vec2::same(0.0));
+///     painter.rect(Vec2::new(200.0, 100.0), Vec2::same(0.0));
 /// }));
 /// ```
 #[derive(Default)]
@@ -350,14 +366,31 @@ pub struct SelectableValue {
 	text: Text,
 	painter: Painter,
 	space: Option<f32>,
+	status: Status
 }
 
 /// a widgets that does nothing
-pub struct Empty {}
+pub struct Empty {
+	pub width_and_height: Vec2,
+}
+
+impl Empty {
+	/// an [`Empty`] that literally takes empty place
+	pub const EMPTY: Empty = Empty {
+		width_and_height: Vec2::ZERO
+	};
+
+	/// create a new [`Empty`]
+	pub fn new(width_and_height: Vec2) -> Self {
+		Self {
+			width_and_height,
+		}
+	}
+}
 
 impl Widget for Empty {
 	fn draw(&mut self, _: &mut Ui, _: &Response, _: &mut Painter) {}
-	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response { ui.response(area.unwrap_or_default(), false, false) }
+	fn ui(&mut self, ui: &mut Ui, area: Option<Area>) -> Response { ui.response(area.unwrap_or([ui.available_position(), ui.available_position() + self.width_and_height].into()), false, false) }
 }
 
 /// a single line to input.
@@ -407,12 +440,35 @@ pub struct DivideLine {
 	centered: Option<bool>
 }
 
+/// A sinple progress bar
+pub struct ProgressBar {
+	progress: f64,
+	attach: bool,
+	status: Status,
+	width: f32
+}
+
 imply_text_trait!(SingleTextInput<'_>);
 imply_text_trait!(Button);
 imply_text_trait!(SelectableValue);
-imply_text_trait!(Label);
+impl TextSetting for Label {
+	fn set_status(self, status: Status) -> Self { Self { text: self.text.set_status(status) } }
+	fn get_color(&self, ui: &mut Ui) -> Color { self.text.get_color(ui) }
+	fn set_width(self, width: f32) -> Self { Self { text: self.text.set_width(width) } }
+	fn set_height(self, height: f32) -> Self { Self { text: self.text.set_height(height)} }
+	fn set_scale(self, scale: Vec2) -> Self { Self { text: self.text.set_scale(scale) } }
+	fn set_em(self, em: Vec2) -> Self { Self { text: self.text.set_em(em)} }
+	fn underline(self, underline: bool) -> Self { Self { text: self.text.underline(underline)} }
+	fn text_area(&self, painter: &mut Painter) -> Area { self.text.text_area(painter) }
+	fn text_draw(&self, painter: &mut Painter, position: Vec2, ui: &mut Ui) { self.text.text_draw(painter, position, ui) }
+	fn set_text(self, text: impl Into<String>) -> Self { Self { text: self.text.set_text(text)} }
+	fn set_color(self, color: impl Into<Color>) -> Self { Self { text: self.text.set_color(color)} }
+	fn set_bold(self, is_bold: bool) -> Self { Self { text: self.text.set_bold(is_bold)} }
+	fn set_italic(self, is_italic: bool) -> Self { Self { text: self.text.set_italic(is_italic)} }
+}
 imply_text_trait!(Collapsing);
 imply_text_trait!(Message);
+imply_text_trait!(TooltipProvider);
 
 /// for a numeric value use in slider etc.
 pub trait Num: PartialOrd + PartialEq + Sized + Clone {

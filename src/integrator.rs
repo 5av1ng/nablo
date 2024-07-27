@@ -43,6 +43,8 @@ pub enum ParsedShape {
 		vertexs: Vec<Vertex>, 
 		indices: Vec<u32>,
 		clip_area: Area,
+		scale_factor: f32,
+		info: u32
 	},
 	Text(Text, Style),
 	Image(Image, Style),

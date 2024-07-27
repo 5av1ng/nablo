@@ -14,7 +14,7 @@ pub struct Image {
 
 #[cfg(any(feature = "manager", feature = "baseview_manager"))]
 pub(crate) fn create_texture(size: Vec2, device: &wgpu::Device, queue: &wgpu::Queue) -> WTexture {
-	let shapes: Vec<u8> = (0..(size.x * size.y * 4.0) as usize).into_iter().map(|_| 0u8).collect();
+	let shapes: Vec<u8> = (0..(size.x * size.y * 4.0) as usize).map(|_| 0u8).collect();
 	create_texture_with_data(size, device, queue, shapes)
 }
 
@@ -46,7 +46,7 @@ pub(crate) fn create_texture_with_data(size: Vec2, device: &wgpu::Device, queue:
 		mip_level: 0,
 		origin: wgpu::Origin3d::ZERO,
 		aspect: wgpu::TextureAspect::All,
-	}, &slice, wgpu::ImageDataLayout {
+	}, slice, wgpu::ImageDataLayout {
 		offset: 0,
 		bytes_per_row: Some(size.x as u32 * 4),
 		rows_per_image: Some(size.y as u32),
@@ -105,22 +105,22 @@ pub(crate) fn create_texture_with_data(size: Vec2, device: &wgpu::Device, queue:
 	}
 }
 
-#[cfg(any(feature = "manager", feature = "baseview_manager"))]
-pub(crate) fn write_texture_with_data(size: Vec2, texture: &wgpu::Texture, queue: &wgpu::Queue, data: &[u8]) {
-	let texture_size = wgpu::Extent3d {
-		width: size.x as u32,
-		height: size.y as u32,
-		depth_or_array_layers: 1,
-	};
+// #[cfg(any(feature = "manager", feature = "baseview_manager"))]
+// pub(crate) fn write_texture_with_data(size: Vec2, texture: &wgpu::Texture, queue: &wgpu::Queue, data: &[u8]) {
+// 	let texture_size = wgpu::Extent3d {
+// 		width: size.x as u32,
+// 		height: size.y as u32,
+// 		depth_or_array_layers: 1,
+// 	};
 
-	queue.write_texture(wgpu::ImageCopyTexture {
-		texture: &texture,
-		mip_level: 0,
-		origin: wgpu::Origin3d::ZERO,
-		aspect: wgpu::TextureAspect::All,
-	}, &data, wgpu::ImageDataLayout {
-		offset: 0,
-		bytes_per_row: Some(size.x as u32 * 4),
-		rows_per_image: Some(size.y as u32),
-	}, texture_size);
-}
+// 	queue.write_texture(wgpu::ImageCopyTexture {
+// 		texture,
+// 		mip_level: 0,
+// 		origin: wgpu::Origin3d::ZERO,
+// 		aspect: wgpu::TextureAspect::All,
+// 	}, data, wgpu::ImageDataLayout {
+// 		offset: 0,
+// 		bytes_per_row: Some(size.x as u32 * 4),
+// 		rows_per_image: Some(size.y as u32),
+// 	}, texture_size);
+// }

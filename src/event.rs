@@ -34,12 +34,18 @@ cfg_if::cfg_if! {
 #[derive(Clone, Debug, PartialEq)]
 /// events the host should handle
 pub enum OutputEvent {
+	ChangeShader(Option<String>),
+	RemoveShader(String),
+	/// id and shader code
+	RegstrateShader(String, String),
 	TextureCreate(Image),
 	TextureChange(Image),
 	TextureDelete(String),
 	ClipboardCopy(String),
 	/// true for open
 	RequireSoftKeyboard(bool),
+	/// close the programe
+	Close
 }
 
 /// storges events that we care
@@ -100,13 +106,13 @@ pub enum MouseButton {
 }
 
 #[cfg(all(feature = "manager", not(target_arch = "wasm32")))]
-impl Into<Event> for WinitWindowEvent<'_> {
-	fn into(self) -> Event { 
-		match self {
-			Self::KeyboardInput{ input, is_synthetic, .. } => {
+impl From<WinitWindowEvent<'_>> for Event {
+	fn from(val: WinitWindowEvent<'_>) -> Self { 
+		match val {
+			WinitWindowEvent::KeyboardInput{ input, is_synthetic, .. } => {
 				if !is_synthetic {
 					let key = if let Some(t) = input.virtual_keycode {
-						Key::from(t.into())
+						t.into()
 					}else {
 						Key::Unknown(0)
 					};
@@ -118,10 +124,10 @@ impl Into<Event> for WinitWindowEvent<'_> {
 					Event::NotSupported
 				}
 			},
-			Self::CursorMoved{ position, .. } => Event::CursorMoved(Vec2::new(position.x as f32, position.y as f32)),
-			Self::CursorEntered{..} => Event::CursorEntered,
-			Self::CursorLeft{..} => Event::CursorLeft,
-			Self::MouseInput{state, button, ..} => {
+			WinitWindowEvent::CursorMoved{ position, .. } => Event::CursorMoved(Vec2::new(position.x as f32, position.y as f32)),
+			WinitWindowEvent::CursorEntered{..} => Event::CursorEntered,
+			WinitWindowEvent::CursorLeft{..} => Event::CursorLeft,
+			WinitWindowEvent::MouseInput{state, button, ..} => {
 				match state {
 					ElementState::Pressed => {
 						match button {
@@ -145,10 +151,10 @@ impl Into<Event> for WinitWindowEvent<'_> {
 					},
 				}
 			},
-			Self::Resized(physical_size) => {
+			WinitWindowEvent::Resized(physical_size) => {
 				Event::Resized(Vec2::new(physical_size.width as f32, physical_size.height as f32))
 			},
-			Self::Ime(ime) => {
+			WinitWindowEvent::Ime(ime) => {
 				match ime {
 					winit::event::Ime::Commit(s) => Event::TextInput(s),
 					winit::event::Ime::Enabled => Event::ImeEnable,
@@ -157,13 +163,13 @@ impl Into<Event> for WinitWindowEvent<'_> {
 				};
 				Event::NotSupported
 			},
-			Self::MouseWheel{ delta, ..} => {
+			WinitWindowEvent::MouseWheel{ delta, ..} => {
 				match delta {
 					winit::event::MouseScrollDelta::LineDelta(x, y) => Event::Scroll(Vec2::new(x, y) * 16.0),
 					winit::event::MouseScrollDelta::PixelDelta(inner) => Event::Scroll(Vec2::new(inner.x as f32, inner.y as f32)),
 				}
 			},
-			Self::Touch(touch) => {
+			WinitWindowEvent::Touch(touch) => {
 				let position = Vec2::new(touch.location.x as f32, touch.location.y as f32);
 				let id = touch.id as usize;
 				match touch.phase {
@@ -387,9 +393,9 @@ impl Key {
 }
 
 #[cfg(all(feature = "manager", not(target_arch = "wasm32")))]
-impl Into<Key> for KeyCode {
-	fn into(self) -> Key { 
-		match self {
+impl From<KeyCode> for Key {
+	fn from(val: KeyCode) -> Self { 
+		match val {
 			KeyCode::A => Key::A,
 			KeyCode::B => Key::B,
 			KeyCode::C => Key::C,

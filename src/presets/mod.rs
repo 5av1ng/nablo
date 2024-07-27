@@ -31,7 +31,7 @@ fn setting_inner(input: &mut ParsedData, id: String, ui: &mut Ui) {
 	let id = format!("{}%%{}", id, name);
 	match &mut input.data {
 		DataEnum::Node(node) => {
-			if node.len() == 0 {
+			if node.is_empty() {
 				ui.label(&name);
 			}else {
 				ui.show(&mut Collapsing::new(id.clone()).set_text(name.clone()), |ui, _| {
@@ -48,7 +48,7 @@ fn setting_inner(input: &mut ParsedData, id: String, ui: &mut Ui) {
 			*map = Box::new((inner1, inner2));
 		},
 		DataEnum::Enum(enum_string, node) => {
-			if node.len() == 0 {
+			if node.is_empty() {
 				ui.label(format!("{}: {}", name, enum_string));
 			}else {
 				ui.show(&mut Collapsing::new(id.clone()).set_text(format!("{}: {}", name, enum_string)), |ui, _| {

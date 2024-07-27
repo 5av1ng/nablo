@@ -1,3 +1,16 @@
+struct Uniform {
+	mouse_position: vec2<f32>,
+	time: f32,
+	info: u32,
+	position: vec2f,
+	width_and_height: vec2f,
+	window_xy: vec2f,
+	indices_len: u32
+};
+
+@group(1) @binding(0)
+var<uniform> uniforms: Uniform;
+
 struct VertexInput {
 	@location(0) position: vec3f,
 	/// if is texture, we'll only use xy to stand tex_coord
@@ -15,6 +28,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(
 	model: VertexInput,
+	@builtin(vertex_index) index: u32,
 ) -> VertexOutput {
 	var out: VertexOutput;
 	out.color = model.color;

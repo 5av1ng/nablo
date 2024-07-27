@@ -82,6 +82,7 @@ impl<'a, T: Num> DragableValue<'a, T> {
 
 impl<T: Num> Widget for DragableValue<'_, T> {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
+		painter.set_transform_origin(response.area.area[0]);
 		// logic
 		let from = self.from.to_f64();
 		let to = self.to.to_f64();
@@ -100,13 +101,11 @@ impl<T: Num> Widget for DragableValue<'_, T> {
 		let input = if from.is_infinite() || to.is_infinite() {
 			let change = drag_delta as f64 * speed;
 			((self.input.to_f64() + change) / step).round() * step
+		}else if self.is_logarithmic {
+			(drag_delta as f64 * speed * (to.ln() - from.ln()) + self.input.to_f64().ln()).exp()
 		}else {
-			if self.is_logarithmic {
-				(drag_delta as f64 * speed * (to.ln() - from.ln()) + self.input.to_f64().ln()).exp()
-			}else {
-				let change = drag_delta as f64 * speed;
-				((self.input.to_f64() + change) / step).round() * step
-			}
+			let change = drag_delta as f64 * speed;
+			((self.input.to_f64() + change) / step).round() * step
 		};
 		*self.input = T::from_f64(compress(input));
 
@@ -116,15 +115,15 @@ impl<T: Num> Widget for DragableValue<'_, T> {
 		let light_factor = if let Some(lost_hover_time) = response.lost_hovering_time() {
 			if let Some(hover_time) = response.hovering_time(){
 				if hover_time - lost_hover_time > animation_time {
-					1.0 - animation.caculate(&lost_hover_time).unwrap_or_else(|| 1.0)
+					1.0 - animation.caculate(&lost_hover_time).unwrap_or(1.0)
 				}else {
-					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or_else(|| 0.0)
+					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or(0.0)
 				}
 			}else {
 				0.0
 			}
 		}else if let Some(hover_time) = response.hovering_time() {
-			animation.caculate(&hover_time).unwrap_or_else(|| 1.0)
+			animation.caculate(&hover_time).unwrap_or(1.0)
 		}else {
 			0.0
 		} * ui.style().brighten_factor;
@@ -139,12 +138,16 @@ impl<T: Num> Widget for DragableValue<'_, T> {
 		let text_area = self.text.text_area(painter);
 
 		painter.set_color(background_color);
-		painter.set_position(response.area.area[0] + Vec2::new(text_area.width() + ui.style().space, 0.0));
-		let stroke_color: Color = 1.0.into();
-		let stroke_color = stroke_color.set_alpha(255);
-		painter.set_stroke_color(stroke_color);
-		painter.set_stroke_width(1.0);
-		painter.rect(Vec2::new(input_text_area.width() + ui.style().space * 2.0, response.area.height()), Vec2::same(2.5));
+		let space = if text_area.width() == 0.0 {
+			0.0
+		}else {
+			text_area.width() + ui.style().space
+		};
+		painter.set_position(response.area.area[0] + Vec2::new(space + 2.0, 2.0));
+		painter.set_stroke_color(ui.style.slider_unreached_color);
+		painter.set_stroke_width(2.0);
+		painter.rect(Vec2::new(input_text_area.width() + ui.style().space * 2.0, response.area.height()) - Vec2::same(2.0), Vec2::same(2.5));
+		painter.set_position(response.area.area[0] + Vec2::new(space, 0.0));
 
 		let width = if input_text_area.width() > response.area.width() + ui.style().space * 2.0 {
 			response.area.width() + ui.style().space * 2.0
@@ -152,7 +155,7 @@ impl<T: Num> Widget for DragableValue<'_, T> {
 			input_text_area.width() 
 		};
 		text = text.clone().set_width(width);
-		text.text_draw(painter, origin + Vec2::new(ui.style().space * 2.0 + text_area.width(), (response.area.height() - input_text_area.height()) / 2.0), ui);
+		text.text_draw(painter, origin + Vec2::new(ui.style().space + space, (response.area.height() - input_text_area.height()) / 2.0), ui);
 
 		let width = if text_area.width() > response.area.width() + ui.style().space * 2.0 {
 			response.area.width() + ui.style().space * 2.0

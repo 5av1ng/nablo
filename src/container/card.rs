@@ -5,7 +5,6 @@ use crate::Response;
 use crate::InnerResponse;
 use nablo_shape::prelude::shape_elements::Layer;
 use nablo_shape::prelude::shape_elements::Color;
-use crate::container::Status;
 use crate::Container;
 use nablo_shape::math::Vec2;
 use nablo_shape::math::Area;
@@ -52,21 +51,17 @@ impl CardTemp {
 		let maxium = self.maxium - container_area.width_and_height();
 		if maxium.x < 0.0 {
 			target.x = 0.0;
-		}else {
-			if target.x < - (maxium.x + 32.0) {
-				target.x = - (maxium.x + 32.0);
-			}else if target.x > 0.0 {
-				target.x = 0.0;
-			}
+		}else if target.x < - (maxium.x + 32.0) {
+			target.x = - (maxium.x + 32.0);
+		}else if target.x > 0.0 {
+			target.x = 0.0;
 		}
 		if maxium.y < 0.0 {
 			target.y = 0.0;
-		}else {
-			if target.y < - maxium.y - 32.0 {
-				target.y = - maxium.y - 32.0
-			}else if target.y > 0.0 {
-				target.y = 0.0;
-			}
+		}else if target.y < - maxium.y - 32.0 {
+			target.y = - maxium.y - 32.0
+		}else if target.y > 0.0 {
+			target.y = 0.0;
 		}
 		let current = self.current();
 		self.target = target;
@@ -79,66 +74,48 @@ impl Container for Card {
 	fn get_id(&self, _: &mut Ui) -> String { self.id.clone() }
 	fn area(&self, ui: &mut Ui) -> Area { self.get_area(ui) }
 	fn layer(&self, _: &mut Ui) -> Layer { Layer::Bottom }
-	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &String) -> bool {
-		if let Some(t) = self.color {
-			painter.set_color(t)
+	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &str) -> bool {
+		let current_color = if let Some(t) = self.color {
+			painter.set_color(t);
+			t
+		}else if ui.collapsing_times() % 2 == 1 {
+			painter.set_color(ui.style().card_color);
+			ui.style().card_color
 		}else {
-			painter.set_color(self.status.into_color(ui))
-		}
-		if let Some(t) = self.stroke_color {
+			painter.set_color(ui.style().background_color);
+			ui.style().background_color
+		};
+		let stroke_width = if let Some(t) = self.stroke_color {
 			painter.set_stroke_width(self.stroke_width);
 			painter.set_stroke_color(t);
-		}
-		painter.set_position(response.area.left_top());
-		painter.rect(Vec2::new(response.area.width(), response.area.height()), self.rounding);
+			self.stroke_width
+		}else {
+			painter.set_stroke_width(3.0);
+			painter.set_stroke_color(current_color.brighter(0.03));
+			3.0
+		};
+		painter.set_position(response.area.left_top() + Vec2::same(stroke_width));
+		painter.rect(Vec2::new(response.area.width(), response.area.height()) - Vec2::same(stroke_width * 2.0), self.rounding);
 		painter.set_position(Vec2::ZERO);
-		let mut temp: CardTemp = ui.memory_read(id).unwrap_or(CardTemp::default());
-		painter.set_stroke_width(0.0);
-		painter.set_stroke_color(1.0);
+		let mut temp: CardTemp = ui.memory_read(id).unwrap_or_default();
 		painter.set_offset(temp.current());
 		painter.set_clip(response.area.shrink(Vec2::same(ui.style().space)).cross_part(&ui.window_crossed()));
+		painter.set_stroke_width(0.0);
+		painter.set_stroke_color(1.0);
 		true
 	}
-	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>, id: &String) {
-		let mut temp: CardTemp = ui.memory_read(id).unwrap_or(CardTemp::default());
+	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>, id: &str) {
+		let mut temp: CardTemp = ui.memory_read(id).unwrap_or_default();
 		let cursor = ui.input().cursor_position().unwrap_or(Vec2::INF);
-		if self.resizable {
-			let inner_area = inner_response.response.area;
-			let resize = vec!(Area::new(inner_area.left_top(), inner_area.left_top() + Vec2::same(16.0)),
-				Area::new(inner_area.left_bottom() + Vec2::new(0.0, - 16.0), inner_area.left_bottom() + Vec2::new(16.0, 0.0)),
-				Area::new(inner_area.right_bottom() - Vec2::same(16.0), inner_area.right_bottom()),
-				Area::new(inner_area.right_top() + Vec2::new(- 16.0, 0.0), inner_area.right_top() + Vec2::new(0.0, 16.0))
-			);
-			let resize: Vec<bool> = resize.iter().map(|inner| inner.is_point_inside(&cursor)).collect();
-			let resize = if (resize.contains(&true) || temp.is_resizing) && !temp.is_scrolling && !temp.is_draging {
-				if let Some(_) = inner_response.response.drag() {
-					temp.is_resizing = true;
-					inner_response.response.drag_delta()
-				}else {
-					temp.is_resizing = false;
-					Vec2::ZERO
-				}
-			}else {
-				Vec2::ZERO
-			};
-			let mut size = temp.size.unwrap_or(inner_area.width_and_height()) + resize;
-			if size.x < self.width.unwrap_or(f32::NEG_INFINITY) {
-				size.x = self.width.unwrap_or(f32::NEG_INFINITY)
-			}
-			if size.y < self.height.unwrap_or(f32::NEG_INFINITY) {
-				size.y = self.height.unwrap_or(f32::NEG_INFINITY)
-			}
-			temp.size = Some(size);
-		}
+		let inner_area = Area::new(inner_response.response.area.area[0] * ui.paint_style.scale_factor, inner_response.response.area.area[1] * ui.paint_style.scale_factor);
 		if self.dragable {
-			let drag = vec!(Area::new(inner_response.response.area.left_top() + Vec2::new(16.0, 0.0), inner_response.response.area.right_top() + Vec2::new(-16.0, 16.0)),
-				Area::new(inner_response.response.area.left_bottom() + Vec2::new(16.0, -16.0), inner_response.response.area.right_bottom() + Vec2::new(-16.0, 0.0)),
-				Area::new(inner_response.response.area.left_top() + Vec2::new(0.0, 16.0), inner_response.response.area.left_bottom() + Vec2::new(16.0, -16.0)),
-				Area::new(inner_response.response.area.right_top() + Vec2::new(-16.0, 16.0), inner_response.response.area.right_bottom() + Vec2::new(0.0, -16.0))
-			);
+			let drag = [Area::new(inner_area.left_top() + Vec2::new(16.0, 0.0), inner_area.right_top() + Vec2::new(-16.0, 16.0)),
+				Area::new(inner_area.left_bottom() + Vec2::new(16.0, -16.0), inner_area.right_bottom() + Vec2::new(-16.0, 0.0)),
+				Area::new(inner_area.left_top() + Vec2::new(0.0, 16.0), inner_area.left_bottom() + Vec2::new(16.0, -16.0)),
+				Area::new(inner_area.right_top() + Vec2::new(-16.0, 16.0), inner_area.right_bottom() + Vec2::new(0.0, -16.0))];
 			let drag: Vec<bool> = drag.iter().map(|inner| inner.is_point_inside(&cursor)).collect();
 			let drag = if (drag.contains(&true) || temp.is_draging) && !temp.is_scrolling && !temp.is_resizing {
-				if let Some(_) = inner_response.response.drag() {
+				if inner_response.response.drag().is_some() {
 					temp.is_draging = true;
 					inner_response.response.drag_delta()
 				}else {
@@ -166,18 +143,16 @@ impl Container for Card {
 		}else {
 			temp.maxium.y = 0.0
 		}
-		if (inner_response.response.area.shrink(Vec2::same(16.0)).is_point_inside(&cursor) && !temp.is_draging) || temp.is_scrolling {
+		if (inner_area.shrink(Vec2::same(16.0)).is_point_inside(&cursor) && !temp.is_draging) || temp.is_scrolling {
 			let scroll = if ui.input().scroll() != Vec2::ZERO {
 				temp.is_scrolling = true;
 				ui.input().scroll()
+			}else if inner_response.response.drag().is_some() {
+				temp.is_scrolling = true;
+				inner_response.response.drag_delta() / ui.paint_style.scale_factor
 			}else {
-				if let Some(_) = inner_response.response.drag() {
-					temp.is_scrolling = true;
-					inner_response.response.drag_delta()
-				}else {
-					temp.is_scrolling = false;
-					Vec2::ZERO
-				}
+				temp.is_scrolling = false;
+				Vec2::ZERO
 			};
 			if scroll != Vec2::ZERO {
 				if self.scrollable[0] {
@@ -190,38 +165,60 @@ impl Container for Card {
 				}
 			}
 		}
+		if self.resizable {
+			let resize = [Area::new(inner_area.left_top(), inner_area.left_top() + Vec2::same(16.0)),
+				Area::new(inner_area.left_bottom() + Vec2::new(0.0, - 16.0), inner_area.left_bottom() + Vec2::new(16.0, 0.0)),
+				Area::new(inner_area.right_bottom() - Vec2::same(16.0), inner_area.right_bottom()),
+				Area::new(inner_area.right_top() + Vec2::new(- 16.0, 0.0), inner_area.right_top() + Vec2::new(0.0, 16.0))];
+			let resize: Vec<bool> = resize.iter().map(|inner| inner.is_point_inside(&cursor)).collect();
+			let resize = if (resize.contains(&true) || temp.is_resizing) && !temp.is_scrolling && !temp.is_draging {
+				if inner_response.response.drag().is_some() {
+					temp.is_resizing = true;
+					inner_response.response.drag_delta()
+				}else {
+					temp.is_resizing = false;
+					Vec2::ZERO
+				}
+			}else {
+				Vec2::ZERO
+			};
+			let mut size = temp.size.unwrap_or(inner_response.response.area.width_and_height()) + resize;
+			if size.x < self.width.unwrap_or(f32::NEG_INFINITY) {
+				size.x = self.width.unwrap_or(f32::NEG_INFINITY)
+			}
+			if size.y < self.height.unwrap_or(f32::NEG_INFINITY) {
+				size.y = self.height.unwrap_or(f32::NEG_INFINITY)
+			}
+			temp.size = Some(size);
+		}
 		ui.memory_save(id, &temp);
 		let inner_area = inner_response.response.area.shrink(Vec2::same(ui.style().space));
 		painter.set_clip(inner_response.response.area.cross_part(&ui.window_crossed()));
-		if self.scrollable[0] {
-			if area.width_and_height().x > inner_area.width() {
-				let current = temp.current();
-				let position = inner_response.response.area.left_bottom() + Vec2::new(ui.style().space, -10.0);
-				painter.set_position(position);
-				painter.set_color(ui.style().background_color.brighter(-0.05));
-				painter.rect(Vec2::new(inner_area.width(), 5.0), Vec2::same(2.5));
-				let length = (inner_area.width()).powf(2.0) / area.width_and_height().x;
-				let x = (inner_area.width() - length) * current.x / (area.width_and_height().x - inner_area.width());
-				let position = inner_response.response.area.left_bottom() + Vec2::new(ui.style().space, -10.0) + Vec2::new(-x, 0.0);
-				painter.set_position(position);
-				painter.set_color(ui.style().primary_color);
-				painter.rect(Vec2::new(length, 5.0), Vec2::same(2.5));
-			}
+		if self.scrollable[0] && area.width_and_height().x > inner_area.width() {
+			let current = temp.current();
+			let position = inner_response.response.area.left_bottom() + Vec2::new(ui.style().space, -10.0);
+			painter.set_position(position);
+			painter.set_color(ui.style().background_color.brighter(-0.05));
+			painter.rect(Vec2::new(inner_area.width(), 5.0), Vec2::same(2.5));
+			let length = (inner_area.width()).powf(2.0) / area.width_and_height().x;
+			let x = (inner_area.width() - length) * current.x / (area.width_and_height().x - inner_area.width());
+			let position = inner_response.response.area.left_bottom() + Vec2::new(ui.style().space, -10.0) + Vec2::new(-x, 0.0);
+			painter.set_position(position);
+			painter.set_color(ui.style().primary_color);
+			painter.rect(Vec2::new(length, 5.0), Vec2::same(2.5));
 		}
-		if self.scrollable[1] {
-			if area.width_and_height().y > inner_area.height() {
-				let current = temp.current();
-				let position = inner_response.response.area.right_top() + Vec2::new(-10.0, ui.style().space);
-				painter.set_position(position);
-				painter.set_color(ui.style().background_color.brighter(-0.05));
-				painter.rect(Vec2::new(5.0, inner_area.height()), Vec2::same(2.5));
-				let length = (inner_area.height() ).powf(2.0) / area.width_and_height().y;
-				let y = (inner_area.height() - length) * current.y / (area.width_and_height().y - inner_area.height());
-				let position = inner_response.response.area.right_top() + Vec2::new(-10.0, ui.style().space) + Vec2::new(0.0, -y);
-				painter.set_position(position);
-				painter.set_color(ui.style().primary_color);
-				painter.rect(Vec2::new(5.0, length), Vec2::same(2.5));
-			}
+		if self.scrollable[1] && area.width_and_height().y > inner_area.height() {
+			let current = temp.current();
+			let position = inner_response.response.area.right_top() + Vec2::new(-10.0, ui.style().space);
+			painter.set_position(position);
+			painter.set_color(ui.style().background_color.brighter(-0.05));
+			painter.rect(Vec2::new(5.0, inner_area.height()), Vec2::same(2.5));
+			let length = (inner_area.height() ).powf(2.0) / area.width_and_height().y;
+			let y = (inner_area.height() - length) * current.y / (area.width_and_height().y - inner_area.height());
+			let position = inner_response.response.area.right_top() + Vec2::new(-10.0, ui.style().space) + Vec2::new(0.0, -y);
+			painter.set_position(position);
+			painter.set_color(ui.style().primary_color);
+			painter.rect(Vec2::new(5.0, length), Vec2::same(2.5));
 		}
 	}
 	fn is_clickable(&self, _: &mut Ui) -> bool { true }
@@ -286,13 +283,13 @@ impl Card {
 		}
 	}
 
-	/// set status to a card
-	pub fn set_status(self, status: Status) -> Self {
-		Self {
-			status,
-			..self
-		}
-	}
+	// /// set status to a card
+	// pub fn set_status(self, status: Status) -> Self {
+	// 	Self {
+	// 		status,
+	// 		..self
+	// 	}
+	// }
 
 	/// set if this card can be drag to some place, can be used to simulate a window
 	pub fn set_dragable(self, dragable: bool) -> Self {
@@ -349,7 +346,7 @@ impl Card {
 	/// where have we scrolled to?
 	pub fn scroll(&self, ui: &mut Ui) -> Vec2 {
 		let id = ui.container_id(self);
-		let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+		let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 		temp.current()
 	}
 
@@ -375,7 +372,7 @@ impl Card {
 		if self.scrollable[0] {
 			let id = ui.container_id(self);
 			let area = self.area(ui);
-			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 			let scroll = Vec2::new(scroll, temp.target.y);
 			temp.change(scroll, &area);
 			ui.memory_save(&id, temp);
@@ -388,7 +385,7 @@ impl Card {
 		if self.scrollable[1] {
 			let id = ui.container_id(self);
 			let area = self.area(ui);
-			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 			let scroll = Vec2::new(temp.target.x, scroll);
 			temp.change(scroll, &area);
 			ui.memory_save(&id, temp);
@@ -407,7 +404,7 @@ impl Card {
 		if self.scrollable[0] {
 			let id = ui.container_id(self);
 			let area = self.area(ui);
-			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 			let scroll = Vec2::new(scroll + temp.target.x, temp.target.y);
 			temp.change(scroll, &area);
 			ui.memory_save(&id, temp);
@@ -420,7 +417,7 @@ impl Card {
 		if self.scrollable[1] {
 			let id = ui.container_id(self);
 			let area = self.area(ui);
-			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 			let scroll = Vec2::new(temp.target.x, scroll + temp.target.y);
 			temp.change(scroll, &area);
 			ui.memory_save(&id, temp);
@@ -431,7 +428,7 @@ impl Card {
 	pub fn get_area(&self, ui: &mut Ui) -> Area {
 		let position = if self.dragable {
 			let id = ui.container_id(self);
-			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 			let position = if let Some(t) = temp.position {
 				t
 			}else {
@@ -445,7 +442,7 @@ impl Card {
 		};
 		let width_and_height = if self.resizable {
 			let id = ui.container_id(self);
-			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or(CardTemp::default());
+			let mut temp: CardTemp = ui.memory_read(&id).unwrap_or_default();
 			let size = if let Some(t) = temp.size {
 				t
 			}else {

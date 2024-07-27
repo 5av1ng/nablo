@@ -106,6 +106,7 @@ struct Select {
 
 impl Widget for SingleTextInput<'_> {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
+		painter.set_transform_origin(response.area.area[0]);
 		self.painter.change_layer(painter.style().layer);
 		let background_color = ui.style().background_color.brighter(0.15);
 		let space = self.space.unwrap_or(ui.style().space);
@@ -150,21 +151,19 @@ impl Widget for SingleTextInput<'_> {
 						temp.select = None;
 					}
 				}
-				let input_text = if utf8_slice::len(input_text) >= limit.checked_sub(len).unwrap_or(0) {
-					utf8_slice::till(input_text, limit.checked_sub(len).unwrap_or(0))
+				let input_text = if utf8_slice::len(input_text) >= limit.saturating_sub(len) {
+					utf8_slice::till(input_text, limit.saturating_sub(len))
 				}else {
 					input_text
 				};
 				let front = utf8_slice::till(self.input, temp.pointer);
 				let back = utf8_slice::from(self.input, temp.pointer);
 				*self.input = front.to_owned() + input_text + back;
-				temp.pointer = temp.pointer + utf8_slice::len(input_text);
+				temp.pointer += utf8_slice::len(input_text);
 			};
 			let input = ui.input().clone();
 			if (input.is_key_released(Key::ControlLeft) && input.is_key_released(Key::V)) |
-			(input.is_key_pressing(Key::ControlLeft) && input.is_key_released(Key::V)) {
-				insert()
-			}else if !(input.is_key_pressing(Key::ControlLeft) || input.is_key_pressing(Key::AltLeft) || input.is_key_pressing(Key::AltRight) || input.is_key_pressing(Key::ControlRight)) {
+			(input.is_key_pressing(Key::ControlLeft) && input.is_key_released(Key::V)) | !(input.is_key_pressing(Key::ControlLeft) || input.is_key_pressing(Key::AltLeft) || input.is_key_pressing(Key::AltRight) || input.is_key_pressing(Key::ControlRight))  {
 				insert()
 			}
 			if (input.is_key_released(Key::ControlLeft) && input.is_key_released(Key::A)) |
@@ -198,13 +197,11 @@ impl Widget for SingleTextInput<'_> {
 					*self.input = utf8_slice::till(self.input, select.begin).to_owned() + utf8_slice::from(self.input, select.end);
 					temp.pointer = select.begin;
 					temp.select = None;
-				}else {
-					if temp.pointer != 0 {
-						let front = utf8_slice::till(self.input, temp.pointer - 1);
-						let back = utf8_slice::from(self.input, temp.pointer);
-						*self.input = front.to_owned() + back;
-						temp.pointer = temp.pointer - 1
-					}
+				}else if temp.pointer != 0 {
+					let front = utf8_slice::till(self.input, temp.pointer - 1);
+					let back = utf8_slice::from(self.input, temp.pointer);
+					*self.input = front.to_owned() + back;
+					temp.pointer -= 1
 				}
 			}
 
@@ -213,26 +210,24 @@ impl Widget for SingleTextInput<'_> {
 				if ui.input().is_key_pressing(Key::ShiftLeft) {
 					if let Some(t) = &mut temp.select {
 						if t.is_backwards {
-							t.begin = t.begin.checked_sub(1).unwrap_or(0);
+							t.begin = t.begin.saturating_sub(1);
 						}else {
-							t.end = t.end.checked_sub(1).unwrap_or(0);
+							t.end = t.end.saturating_sub(1);
 							if t.end == t.begin {
 								t.is_backwards = true
 							}
 						}
-					}else {
-						if temp.pointer != 0 {
-							temp.select = Some(Select {
-								begin: temp.pointer - 1,
-								end: temp.pointer,
-								is_backwards: true,
-							});
-						}
+					}else if temp.pointer != 0 {
+						temp.select = Some(Select {
+							begin: temp.pointer - 1,
+							end: temp.pointer,
+							is_backwards: true,
+						});
 					}
-					temp.pointer = temp.pointer.checked_sub(1).unwrap_or(0);
+					temp.pointer = temp.pointer.saturating_sub(1);
 				}else {
 					if temp.pointer != 0 {
-						temp.pointer = temp.pointer - 1;
+						temp.pointer -= 1;
 					}
 					temp.select = None;
 				}
@@ -241,7 +236,7 @@ impl Widget for SingleTextInput<'_> {
 					if let Some(t) = &mut temp.select {
 						let add_with_ceil = |input: &mut usize| { 
 							if input < &mut utf8_slice::len(self.input) { 
-								*input = *input + 1; 
+								*input += 1; 
 							} 
 						}; 
 						if t.is_backwards {
@@ -252,21 +247,19 @@ impl Widget for SingleTextInput<'_> {
 						}else {
 							add_with_ceil(&mut t.end);
 						}
-					}else {
-						if temp.pointer < utf8_slice::len(self.input) {
-							temp.select =  Some(Select {
-								begin: temp.pointer,
-								end: temp.pointer + 1,
-								is_backwards: false,
-							});
-						}
+					}else if temp.pointer < utf8_slice::len(self.input) {
+						temp.select =  Some(Select {
+							begin: temp.pointer,
+							end: temp.pointer + 1,
+							is_backwards: false,
+						});
 					}
 					if temp.pointer < utf8_slice::len(self.input) {
-						temp.pointer = temp.pointer + 1;
+						temp.pointer += 1;
 					}
 				}else {
 					if temp.pointer < utf8_slice::len(self.input) {
-						temp.pointer = temp.pointer + 1;
+						temp.pointer += 1;
 					}
 					temp.select = None;
 				}
@@ -304,9 +297,9 @@ impl Widget for SingleTextInput<'_> {
 		let brighter = if temp.change_time.len() == 2 {
 			let delta = temp.change_time[0].elapsed() - temp.change_time[1].elapsed();
 			let calc = if delta > animation_time {
-				animation.caculate(&temp.change_time[1].elapsed()).unwrap_or_else(|| 1.0)
+				animation.caculate(&temp.change_time[1].elapsed()).unwrap_or(1.0)
 			}else {
-				animation.caculate(&(delta + temp.change_time[1].elapsed())).unwrap_or_else(|| 1.0)
+				animation.caculate(&(delta + temp.change_time[1].elapsed())).unwrap_or(1.0)
 			};
 			if temp.is_focused {
 				calc
@@ -314,7 +307,7 @@ impl Widget for SingleTextInput<'_> {
 				1.0 - calc
 			}
 		}else if temp.change_time.len() == 1 {
-			let calc = animation.caculate(&temp.change_time[0].elapsed()).unwrap_or_else(|| 1.0);
+			let calc = animation.caculate(&temp.change_time[0].elapsed()).unwrap_or(1.0);
 			if temp.is_focused {
 				calc
 			}else {
@@ -327,15 +320,15 @@ impl Widget for SingleTextInput<'_> {
 		let light_factor = if let Some(lost_hover_time) = response.lost_hovering_time() {
 			if let Some(hover_time) = response.hovering_time(){
 				if hover_time - lost_hover_time > animation_time {
-					1.0 - animation.caculate(&lost_hover_time).unwrap_or_else(|| 1.0)
+					1.0 - animation.caculate(&lost_hover_time).unwrap_or(1.0)
 				}else {
-					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or_else(|| 0.0)
+					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or(0.0)
 				}
 			}else {
 				0.0
 			}
 		}else if let Some(hover_time) = response.hovering_time() {
-			animation.caculate(&hover_time).unwrap_or_else(|| 1.0)
+			animation.caculate(&hover_time).unwrap_or(1.0)
 		}else {
 			0.0
 		} * ui.style().brighten_factor;
@@ -343,25 +336,26 @@ impl Widget for SingleTextInput<'_> {
 		// draw
 		// # background
 		if self.is_password {
-			self.text.text = (0..utf8_slice::len(self.input)).into_iter().map(|_| PASSWORD).collect();
+			self.text.text = (0..utf8_slice::len(self.input)).map(|_| PASSWORD).collect();
 		}else {
-			self.text.text = self.input.clone();
+			self.text.text.clone_from(self.input);
 		}
 		painter.set_color(background_color);
-		painter.set_position(response.area.area[0]);
-		let stroke_color: Color = 1.0.into();
+		painter.set_position(response.area.area[0] + Vec2::same(2.0));
+		let stroke_color: Color = ui.style().slider_unreached_color;
 		let stroke_color = stroke_color.set_alpha((brighter * 255.0) as u8);
 		painter.set_stroke_color(stroke_color);
-		painter.set_stroke_width(1.0);
-		painter.rect(response.area.width_and_height(), Vec2::same(2.5));
+		painter.set_stroke_width(2.0);
+		painter.rect(response.area.width_and_height() - Vec2::same(2.0), Vec2::same(2.5));
+		painter.set_position(response.area.area[0]);
 		// # icon
 		let position = response.area.area[0] + Vec2::new(space / 2.0, (response.area.height() - icon_area.height()) / 2.0);
-		self.painter.move_delta_to(position);
+		self.painter.move_by(position);
 		self.painter.change_clip(painter.style().clip);
 		painter.append(&mut self.painter);
 		// # text
 		if self.text.text.is_empty() {
-			self.text.text = self.place_holder.clone();
+			self.text.text.clone_from(&self.place_holder);
 			self.text.color = Some([0.5,0.5,0.5,0.5].into());
 		}
 		let front = utf8_slice::till(&self.text.text, temp.pointer).to_string();
@@ -372,7 +366,7 @@ impl Widget for SingleTextInput<'_> {
 		};
 		let y = (response.area.height() - 16.0) / 2.0;
 		let position = response.area.area[0] + Vec2::new(x, y);
-		painter.set_clip(Area::from([text_start + response.area.area[0].x, response.area.area[0].y, response.area.area[1].x - space, response.area.area[1].y].into()).cross_part(&painter.style().clip));
+		painter.set_clip(Area::from([text_start + response.area.area[0].x, response.area.area[0].y, response.area.area[1].x - space, response.area.area[1].y]).cross_part(&painter.style().clip));
 		self.text = self.text.clone().set_width(response.area.width());
 		self.text.text_draw(painter, position, ui);
 		// # pointer

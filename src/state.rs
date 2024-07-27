@@ -1,9 +1,10 @@
-use fontdue::Font;
-use once_cell::sync::Lazy;
-use std::sync::Arc;
-use crate::texture::write_texture_with_data;
-use crate::prelude::ShapeElement;
-use crate::prelude::Shape;
+// use fontdue::Font;
+// use once_cell::sync::Lazy;
+// use std::sync::Arc;
+// use crate::texture::write_texture_with_data;
+// use crate::prelude::ShapeElement;
+// use crate::prelude::Shape;
+use wgpu::TextureView;
 use nablo_shape::prelude::shape_elements::Style;
 use wgpu_text::BrushBuilder;
 use nablo_shape::prelude::shape_elements::DEFAULT_FONT;
@@ -28,7 +29,7 @@ use pollster::FutureExt as _;
 // use raqote::*;
 use anyhow::*;
 
-static FONT: Lazy<Arc<Font>> = Lazy::new(|| {Arc::new(fontdue::Font::from_bytes(DEFAULT_FONT as &[u8], Default::default()).expect("loading font failed"))});
+// static FONT: Lazy<Arc<Font>> = Lazy::new(|| {Arc::new(fontdue::Font::from_bytes(DEFAULT_FONT as &[u8], Default::default()).expect("loading font failed"))});
 
 /// a struct for using wgpu
 pub(crate) struct State {
@@ -39,9 +40,15 @@ pub(crate) struct State {
 	pub size: Vec2,
 	pub render_pipeline: wgpu::RenderPipeline,
 	pub empty_texture: WTexture,
-	pub vertex_buffer: Vec<wgpu::Buffer>,
-	pub index_buffer: Vec<wgpu::Buffer>,
-	pub shader: wgpu::ShaderModule,
+	pub vertex_buffer: wgpu::Buffer,
+	pub index_buffer: wgpu::Buffer,
+	pub uniform_buffer: wgpu::Buffer,
+	pub uniform_bind_group: wgpu::BindGroup,
+	pub uniform_bind_group_layout: wgpu::BindGroupLayout,
+	pub shader_default: wgpu::ShaderModule,
+	pub fragment_shaders: HashMap<String, wgpu::ShaderModule>,
+	/// None for default
+	pub current_shader: Option<String>,
 	// contains original image size
 	pub texture_map: HashMap<String, WTexture>,
 	pub brushes: Vec<TextBrush<FontArc>>,
@@ -64,17 +71,58 @@ struct Vertex {
 	is_texture: u32
 }
 
-const VERTICES: &[Vertex] = &[
-	Vertex { position: [-1.0, 1.0, 0.0], color: [0.0, 0.0, 0.0, 0.0], is_texture: 1 },
-	Vertex { position: [-1.0, -1.0, 0.0], color: [0.0, 1.0, 0.0, 0.0], is_texture: 1 },
-	Vertex { position: [1.0, -1.0, 0.0], color: [1.0, 1.0, 0.0, 0.0], is_texture: 1 },
-	Vertex { position: [1.0, 1.0, 0.0], color: [1.0, 0.0, 0.0, 0.0], is_texture: 1 }
-];
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Uniform {
+	mouse_position: [f32; 2],
+	/// based on second
+	time: f32,
+	/// you need code by your self
+	info: u32,
+	position: [f32; 2],
+	width_and_height: [f32; 2],
+	window_xy: [f32; 2],
+	indices_len: u32,
+}
 
-const INDICES: &[u32] = &[
-	0, 1, 2,
-	0, 2, 3,
-];
+const SHADER_STRUCT: &str = r#"
+struct VertexOutput {
+	@builtin(position) clip_position: vec4f,
+	@location(0) color: vec4f,
+	@location(1) is_texture: u32,
+}
+
+@group(0)@binding(0)
+var t_diffuse: texture_2d<f32>;
+@group(0)@binding(1)
+var s_diffuse: sampler;
+
+struct Uniform {
+	mouse_position: vec2<f32>,
+	time: f32,
+	info: u32,
+	position: vec2f,
+	width_and_height: vec2f,
+	window_xy: vec2f,
+	indices_len: u32
+};
+
+@group(1) @binding(0)
+var<uniform> uniforms: Uniform;
+"#;
+
+
+// const VERTICES: &[Vertex] = &[
+// 	Vertex { position: [-1.0, 1.0, 0.0], color: [0.0, 0.0, 0.0, 0.0], is_texture: 1 },
+// 	Vertex { position: [-1.0, -1.0, 0.0], color: [0.0, 1.0, 0.0, 0.0], is_texture: 1 },
+// 	Vertex { position: [1.0, -1.0, 0.0], color: [1.0, 1.0, 0.0, 0.0], is_texture: 1 },
+// 	Vertex { position: [1.0, 1.0, 0.0], color: [1.0, 0.0, 0.0, 0.0], is_texture: 1 }
+// ];
+
+// const INDICES: &[u32] = &[
+// 	0, 1, 2,
+// 	0, 2, 3,
+// ];
 
 impl State {
 	pub(crate) fn new<Window: raw_window_handle::HasRawDisplayHandle + raw_window_handle::HasRawWindowHandle>(window: &Window, size: Vec2) -> Self {
@@ -121,13 +169,46 @@ impl State {
 		};
 		surface.configure(&device, &config);
 
-		let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
+		let shader_default = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
 		let empty_texture = create_texture([size.x, size.y].into(), &device, &queue);
 
+
+		let uniform_buffer = device.create_buffer(
+			&wgpu::BufferDescriptor {
+				label: Some("uniform Buffer Render"),
+				size: 64,
+				usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+				mapped_at_creation: false,
+			}
+		);
+
+		let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			entries: &[wgpu::BindGroupLayoutEntry {
+				binding: 0,
+				visibility: wgpu::ShaderStages::all(),
+				ty: wgpu::BindingType::Buffer {
+					ty: wgpu::BufferBindingType::Uniform,
+					has_dynamic_offset: false,
+					min_binding_size: None,
+				},
+				count: None,
+			}],
+			label: Some("uniform bind group layout"),
+		});
+
+		let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+			layout: &uniform_bind_group_layout,
+			entries: &[wgpu::BindGroupEntry {
+				binding: 0,
+				resource: uniform_buffer.as_entire_binding(),
+			}],
+			label: Some("uniform bind group layout"),
+		});
+
 		let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label: Some("Render Pipeline Layout"),
-			bind_group_layouts: &[&empty_texture.layout],
+			bind_group_layouts: &[&empty_texture.layout, &uniform_bind_group_layout],
 			push_constant_ranges: &[],
 		});
 
@@ -135,12 +216,12 @@ impl State {
 			label: Some("Render Pipeline"),
 			layout: Some(&render_pipeline_layout),
 			vertex: wgpu::VertexState {
-				module: &shader,
+				module: &shader_default,
 				entry_point: "vs_main",
 				buffers: &[desc()],
 			},
 			fragment: Some(wgpu::FragmentState {
-				module: &shader,
+				module: &shader_default,
 				entry_point: "fs_main",
 				targets: &[Some(wgpu::ColorTargetState {
 					format: config.format,
@@ -166,23 +247,23 @@ impl State {
 			multiview: None,
 		});
 
-		let vertex_buffer = vec!(device.create_buffer(
+		let vertex_buffer = device.create_buffer(
 			&wgpu::BufferDescriptor {
-				label: Some(&format!("Vertex Buffer Render")),
+				label: Some("Vertex Buffer Render"),
 				size: 2_u64.pow(16),
 				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
 				mapped_at_creation: false,
 			}
-		));
+		);
 
-		let index_buffer = vec!(device.create_buffer(
+		let index_buffer = device.create_buffer(
 			&wgpu::BufferDescriptor {
-				label: Some(&format!("Index Buffer Render")),
+				label: Some("Index Buffer Render"),
 				size: 2_u64.pow(16),
 				usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
 				mapped_at_creation: false,
 			}
-		));
+		);
 
 		let font = FontArc::try_from_slice(DEFAULT_FONT).unwrap();
 		let brush = BrushBuilder::using_font(font.clone()).build(&device, config.width, config.height, config.format);
@@ -197,10 +278,15 @@ impl State {
 			empty_texture,
 			vertex_buffer,
 			index_buffer,
-			shader,
+			uniform_buffer,
+			uniform_bind_group,
+			uniform_bind_group_layout,
+			shader_default,
 			texture_map: HashMap::new(),
 			brushes: vec!(brush),
-			font
+			font,
+			fragment_shaders: HashMap::new(),
+			current_shader: None
 		}
 	}
 
@@ -215,19 +301,29 @@ impl State {
 			self.empty_texture = create_texture([new_size.x, new_size.y].into() , &self.device, &self.queue);
 			let render_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 				label: Some("Render Pipeline Layout"),
-				bind_group_layouts: &[&self.empty_texture.layout],
+				bind_group_layouts: &[&self.empty_texture.layout, &self.uniform_bind_group_layout],
 				push_constant_ranges: &[],
 			});
+			let module = if let Some(shader_id) = &self.current_shader {
+				if let Some(shader) = self.fragment_shaders.get(shader_id) {
+					shader
+				}else {
+					&self.shader_default
+				}
+			}else {
+				&self.shader_default
+			};
+				
 			let render_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 				label: Some("Render Pipeline"),
 				layout: Some(&render_pipeline_layout),
 				vertex: wgpu::VertexState {
-					module: &self.shader,
+					module: &self.shader_default,
 					entry_point: "vs_main",
 					buffers: &[desc()],
 				},
 				fragment: Some(wgpu::FragmentState {
-					module: &self.shader,
+					module,
 					entry_point: "fs_main",
 					targets: &[Some(wgpu::ColorTargetState {
 						format: self.config.format,
@@ -257,10 +353,126 @@ impl State {
 		}
 	}
 
-	pub(crate) fn render(&mut self, input: Output<Vec<ParsedShape>>) -> Result<(), wgpu::SurfaceError> {
+	pub(crate) fn draw_single_shape(&mut self, shape: ParsedShape, mouse_position: Vec2, time: f32, text_count: &mut usize, view: &TextureView) -> Result<(), wgpu::SurfaceError> {
+		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("Render Texture Encoder"),
+		});
+		let window_size = Vec2::new(self.config.width as f32, self.config.height as f32);
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			label: Some("Render Pass Texture"),
+			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+				view,
+				resolve_target: None,
+				ops: wgpu::Operations {
+				load: wgpu::LoadOp::Load,
+				store: wgpu::StoreOp::Store,
+			},
+			})],
+			..Default::default()
+		});
+		render_pass.set_pipeline(&self.render_pipeline);
+
+		match shape {
+			ParsedShape::Vertexs { vertexs, indices, clip_area, scale_factor, info } => {
+				self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[Uniform {
+					mouse_position: [mouse_position.x, mouse_position.y],
+					position: [clip_area.left_top().x, clip_area.left_top().y],
+					width_and_height: [clip_area.width_and_height().x, clip_area.width_and_height().y],
+					time,
+					info,
+					window_xy: [window_size.x, window_size.y],
+					indices_len: vertexs.len() as u32,
+				}]));
+
+				render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
+				render_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+				let mut vertexs_process = vec!();
+				for vertex in vertexs {
+					vertexs_process.push(Vertex {
+						position: vertex.position,
+						color: vertex.color,
+						is_texture: 0,
+					})
+				}
+				self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertexs_process));
+				self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
+				let clip_area = Area::new((clip_area.area[0] + Vec2::same(1.0)) / 2.0 * window_size * scale_factor, (clip_area.area[1] + Vec2::same(1.0)) / 2.0 * window_size * scale_factor);
+				let clip_area = Area::new_with_origin(window_size).cross_part(&clip_area);
+				render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
+				render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+				render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+				render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+			},
+			ParsedShape::Text(text, style) => {
+				if *text_count >= self.brushes.len() {
+					self.brushes.push(BrushBuilder::using_font(self.font.clone()).build(&self.device, self.config.width, self.config.height, self.config.format))
+				}
+				render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
+				let section = TextSection::default()
+					.with_screen_position((style.position.x * style.scale_factor, style.position.y * style.scale_factor))
+					.add_text(WText::new(text.text.leak()).with_color(style.fill.normalized()).with_scale(EM * CORRECTION * style.size.len() / 2_f32.sqrt() * style.scale_factor));
+				let clip_area = Area::new_with_origin(window_size).cross_part(&Area::new(style.clip.area[0] * style.scale_factor, style.clip.area[1] * style.scale_factor));
+				render_pass.set_scissor_rect(
+					clip_area.area[0].x as u32, 
+					clip_area.area[0].y as u32, 
+					clip_area.width_and_height().x as u32, 
+					clip_area.width_and_height().y as u32
+				);
+				self.brushes[*text_count].queue(&self.device, &self.queue, vec!(section)).unwrap();
+				self.brushes[*text_count].draw(&mut render_pass);
+				*text_count += 1;
+			},
+			ParsedShape::Image(image, style) => {
+				if let Some(t) = self.texture_map.get(&image.id) {
+					render_pass.set_bind_group(0, &t.bind_group, &[]);
+					let mask = image.mask.unwrap_or(ShapeMask::Rect(Rect {
+						width_and_height: image.size,
+						..Default::default()
+					}));
+					let (vertexs, indices, clip_area) = mask.into_vertexs(window_size, &style);
+					let clip_area = Area::new(clip_area.area[0] * style.scale_factor, clip_area.area[1] * style.scale_factor);
+					let (texture_cords, _, _) = mask.into_vertexs(image.size, &Style {
+						position: Vec2::ZERO,
+						..style.clone()
+					});
+					self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[Uniform {
+						mouse_position: [mouse_position.x, mouse_position.y],
+						position: [clip_area.left_top().x, clip_area.left_top().y],
+						width_and_height: [clip_area.width_and_height().x, clip_area.width_and_height().y],
+						time,
+						info: style.info,
+						window_xy: [window_size.x, window_size.y],
+						indices_len: vertexs.len() as u32,
+					}]));
+					let mut vertexs_process = vec!();
+					for i in 0..vertexs.len() {
+						vertexs_process.push(Vertex {
+							position: vertexs[i].position,
+							color: [(texture_cords[i].position[0] + 1.0) / 2.0, 1.0 - (texture_cords[i].position[1] + 1.0) / 2.0, 0.0, 0.0],
+							is_texture: 1,
+						})
+					}
+					self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertexs_process));
+					self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
+					let clip_area = Area::new((clip_area.area[0] + Vec2::same(1.0)) / 2.0 * window_size, (clip_area.area[1] + Vec2::same(1.0)) / 2.0 * window_size);
+					let clip_area = Area::new_with_origin(window_size).cross_part(&clip_area);
+					render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
+					render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+					render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+					render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+				}
+			},
+		};
+
+		drop(render_pass);
+
+		self.queue.submit(Some(encoder.finish()));
+		Ok(())
+	}
+
+	pub(crate) fn render(&mut self, input: Output<Vec<ParsedShape>>, mouse_position: Vec2, time: f32) -> Result<(), wgpu::SurfaceError> {
 		let output = self.surface.get_current_texture()?;
 		let view = output.texture.create_view(&Default::default());
-		let window_size = Vec2::new(self.config.width as f32, self.config.height as f32);
 		// clear sections
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: Some("Render Texture Encoder"),
@@ -273,10 +485,10 @@ impl State {
 				resolve_target: None,
 				ops: wgpu::Operations {
 					load: wgpu::LoadOp::Clear(wgpu::Color {
-						r: (input.background_color[0] as f64 / 255.0).powf(2.2),
-						g: (input.background_color[1] as f64 / 255.0).powf(2.2),
-						b: (input.background_color[2] as f64 / 255.0).powf(2.2),
-						a: (input.background_color[3] as f64 / 255.0).powf(2.2),
+						r: input.background_color[0].powf(2.2) as f64,
+						g: input.background_color[1].powf(2.2) as f64,
+						b: input.background_color[2].powf(2.2) as f64,
+						a: input.background_color[3].powf(2.2) as f64,
 					}),
 					store: wgpu::StoreOp::Store,
 				},
@@ -287,124 +499,15 @@ impl State {
 		render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
 		drop(render_pass);
 
+		self.queue.submit(Some(encoder.finish()));
+
 		// draw process
-		let mut i = 0;
 		let mut text_count = 0;
 		for shape in input.shapes {
-			if i >= self.vertex_buffer.len() {
-				let vertex_buffer = self.device.create_buffer(
-					&wgpu::BufferDescriptor {
-						label: Some(&format!("Vertex Buffer Render")),
-						size: 2_u64.pow(16),
-						usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-						mapped_at_creation: false,
-					}
-				);
 
-				let index_buffer = self.device.create_buffer(
-					&wgpu::BufferDescriptor {
-						label: Some(&format!("Index Buffer Render")),
-						size: 2_u64.pow(16),
-						usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-						mapped_at_creation: false,
-					}
-				);
-				self.vertex_buffer.push(vertex_buffer);
-				self.index_buffer.push(index_buffer);
-			}
-
-			let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label: Some("Render Pass Texture"),
-				color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-					view: &view,
-					resolve_target: None,
-					ops: wgpu::Operations {
-					load: wgpu::LoadOp::Load,
-					store: wgpu::StoreOp::Store,
-				},
-				})],
-				..Default::default()
-			});
-			render_pass.set_pipeline(&self.render_pipeline);
-
-			match shape {
-				ParsedShape::Vertexs { vertexs, indices, clip_area } => {
-					render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
-					let mut vertexs_process = vec!();
-					for vertex in vertexs {
-						vertexs_process.push(Vertex {
-							position: vertex.position,
-							color: vertex.color,
-							is_texture: 0,
-						})
-					}
-					self.queue.write_buffer(&self.vertex_buffer[i], 0, bytemuck::cast_slice(&vertexs_process));
-					self.queue.write_buffer(&self.index_buffer[i], 0, bytemuck::cast_slice(&indices));
-					let clip_area = Area::new((clip_area.area[0] + Vec2::same(1.0)) / 2.0 * window_size, (clip_area.area[1] + Vec2::same(1.0)) / 2.0 * window_size);
-					let clip_area = Area::new_with_origin(window_size).cross_part(&clip_area);
-					render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
-					render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
-					render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
-					render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
-					i = i + 1;
-				},
-				ParsedShape::Text(text, style) => {
-					if text_count >= self.brushes.len() {
-						self.brushes.push(BrushBuilder::using_font(self.font.clone()).build(&self.device, self.config.width, self.config.height, self.config.format))
-					}
-					render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
-					let section = TextSection::default()
-						.with_screen_position((style.position.x, style.position.y))
-						.add_text(WText::new(text.text.leak()).with_color(style.fill.normalized()).with_scale(EM * CORRECTION * style.size.len() / 2_f32.sqrt()));
-					let clip_area = Area::new_with_origin(window_size).cross_part(&style.clip);
-					render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
-					self.brushes[text_count].queue(&self.device, &self.queue, vec!(section)).unwrap();
-					self.brushes[text_count].draw(&mut render_pass);
-					text_count = text_count + 1;
-				},
-				ParsedShape::Image(image, style) => {
-					if let Some(t) = self.texture_map.get(&image.id) {
-						render_pass.set_bind_group(0, &t.bind_group, &[]);
-						let mask = image.mask.unwrap_or(ShapeMask::Rect(Rect {
-							width_and_height: image.size,
-							..Default::default()
-						}));
-						let (vertexs, indices, clip_area) = mask.into_vertexs(window_size, &style);
-						let (texture_cords, _, _) = mask.into_vertexs(image.size, &Style {
-							position: Vec2::ZERO,
-							..style.clone()
-						});
-						let mut vertexs_process = vec!();
-						for i in 0..vertexs.len() {
-							vertexs_process.push(Vertex {
-								position: vertexs[i].position,
-								color: [(texture_cords[i].position[0] + 1.0) / 2.0, 1.0 - (texture_cords[i].position[1] + 1.0) / 2.0, 0.0, 0.0],
-								is_texture: 1,
-							})
-						}
-						self.queue.write_buffer(&self.vertex_buffer[i], 0, bytemuck::cast_slice(&vertexs_process));
-						self.queue.write_buffer(&self.index_buffer[i], 0, bytemuck::cast_slice(&indices));
-						let clip_area = Area::new((clip_area.area[0] + Vec2::same(1.0)) / 2.0 * window_size, (clip_area.area[1] + Vec2::same(1.0)) / 2.0 * window_size);
-						let clip_area = Area::new_with_origin(window_size).cross_part(&clip_area);
-						render_pass.set_scissor_rect(clip_area.area[0].x as u32, clip_area.area[0].y as u32, clip_area.width_and_height().x as u32, clip_area.width_and_height().y as u32);
-						render_pass.set_vertex_buffer(0, self.vertex_buffer[i].slice(..));
-						render_pass.set_index_buffer(self.index_buffer[i].slice(..), wgpu::IndexFormat::Uint32);
-						render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
-						i = i + 1;
-					}
-				},
-			};
-
-			drop(render_pass);
+			self.draw_single_shape(shape, mouse_position, time, &mut text_count, &view)?;
 		}
 
-		if i <= self.vertex_buffer.len() {
-			let len = self.vertex_buffer.len();
-			for _ in 0..(len - i) {
-				self.vertex_buffer.pop();
-				self.index_buffer.pop();
-			}
-		}
 
 		if text_count <= self.brushes.len() {
 			let len = self.brushes.len();
@@ -413,180 +516,7 @@ impl State {
 			}
 		}
 
-		self.queue.submit(Some(encoder.finish()));
 		output.present();
-
-		Ok(())
-	}
-
-	pub(crate) fn soft_render(&mut self, input: Output<Vec<Shape>>) -> Result<(), wgpu::SurfaceError> {
-		let output = self.surface.get_current_texture()?;
-		let view = output.texture.create_view(&Default::default());
-		let window_size = Vec2::new(self.config.width as f32, self.config.height as f32);
-
-		fn parse_shape(shape: &ShapeMask, style: &Style) -> tiny_skia::Path {
-			let mut pb = tiny_skia::PathBuilder::new();
-
-			match shape {
-				ShapeMask::Circle(inner) => {
-					pb.push_circle(inner.radius, inner.radius, inner.radius);
-				},
-				ShapeMask::Rect(inner) => {
-					if inner.rounding == Vec2::ZERO {
-						pb.push_rect(tiny_skia::Rect::from_ltrb(0.0,0.0,inner.width_and_height.x, inner.width_and_height.y).unwrap());
-					}else {
-						let magic_number = 4.0 / 3.0 * (2.0_f32.sqrt() - 1.0);
-						pb.move_to(inner.width_and_height.x, inner.width_and_height.y - inner.rounding.y);
-						pb.cubic_to(inner.width_and_height.x, inner.width_and_height.y + (magic_number - 1.0) * inner.rounding.y,
-							inner.width_and_height.x + (magic_number - 1.0) * inner.rounding.x, inner.width_and_height.y,
-							inner.width_and_height.x - inner.rounding.x, inner.width_and_height.y);
-
-						pb.line_to(inner.rounding.x, inner.width_and_height.y);
-						pb.cubic_to((1.0 - magic_number) * inner.rounding.x, inner.width_and_height.y,
-							0.0, inner.width_and_height.y + (magic_number - 1.0) *inner.rounding.y,
-							0.0, inner.width_and_height.y - inner.rounding.y);
-
-						pb.line_to(0.0, inner.rounding.y);
-						pb.cubic_to(0.0, (1.0 - magic_number) * inner.rounding.y,
-							(1.0 - magic_number) * inner.rounding.x, 0.0,
-							inner.rounding.x, 0.0);
-
-						pb.line_to(inner.width_and_height.x - inner.rounding.x, 0.0);
-						pb.cubic_to(inner.width_and_height.x + (magic_number - 1.0) * inner.rounding.x, 0.0,
-							inner.width_and_height.x, (1.0 - magic_number) * inner.rounding.y,
-							inner.width_and_height.x, inner.rounding.y);
-						pb.line_to(inner.width_and_height.x, inner.width_and_height.y - inner.rounding.y);
-						pb.close();
-					}
-				},
-				ShapeMask::CubicBezier(inner) => {
-					pb.move_to(inner.points[0].x, inner.points[0].y);
-					pb.cubic_to(inner.points[1].x, inner.points[1].y, inner.points[2].x, inner.points[2].y, inner.points[3].x, inner.points[3].y);
-					if inner.if_close {
-						pb.close();
-					}
-				},
-				ShapeMask::Line(inner) => {
-					pb.cubic_to(0.0, 0.0, inner.x, inner.y, inner.x, inner.y);
-				},
-				ShapeMask::Polygon(inner) => {
-					let mut started = false;
-					for point in &inner.points {
-						if !started {
-							pb.move_to(point.x, point.y);
-							started = true;
-							continue;
-						}
-						pb.line_to(point.x, point.y);
-					}
-					pb.close();
-				},
-			}
-			let path = pb.finish().unwrap();
-
-			let transform = tiny_skia::Transform::identity()
-				.post_translate(style.position.x, style.position.y)
-				.post_translate(-style.transform_origin.x, -style.transform_origin.y)
-				.post_rotate(style.rotate / std::f32::consts::PI * 180.0)
-				.post_scale(style.size.x, style.size.y)
-				.post_translate(style.transform_origin.x, style.transform_origin.y);
-
-			path.transform(transform).unwrap()
-		}
-
-		let mut pixmap = tiny_skia::Pixmap::new(window_size.x as u32, window_size.y as u32).unwrap();
-
-		for shape in input.shapes {
-			let mut mask = tiny_skia::Mask::new(window_size.x as u32, window_size.y as u32).unwrap();
-			let mut pb = tiny_skia::PathBuilder::new();
-			pb.push_rect(tiny_skia::Rect::from_ltrb(shape.style.clip.area[0].x, shape.style.clip.area[0].y, shape.style.clip.area[1].x, shape.style.clip.area[1].y).unwrap());
-			let clip = pb.finish().unwrap();
-			mask.fill_path(&clip, tiny_skia::FillRule::EvenOdd, true, Default::default());
-			match shape.shape {
-				ShapeElement::Text(inner) => {
-					let transform = tiny_skia::Transform::identity()
-						.post_translate(shape.style.position.x, shape.style.position.y)
-						.post_translate(-shape.style.transform_origin.x, -shape.style.transform_origin.y)
-						.post_rotate(shape.style.rotate / std::f32::consts::PI * 180.0)
-						.post_scale(shape.style.size.x, shape.style.size.y)
-						.post_translate(shape.style.transform_origin.x, shape.style.transform_origin.y);
-					let em = EM * shape.style.size.len() / 2.0_f32.sqrt() * CORRECTION;
-					let fonts = &[FONT.clone()];
-					let mut layout = fontdue::layout::Layout::new(fontdue::layout::CoordinateSystem::PositiveYDown);
-					layout.reset(&Default::default());
-					layout.append(fonts, &fontdue::layout::TextStyle::new(&inner.text, em, 0));
-					let glyphs = layout.glyphs();
-					for glyph in glyphs {
-						let (metrics, image_data) = FONT.rasterize(glyph.parent, em);
-						if image_data.len() == 0 {
-							continue
-						}
-						let mut data = vec!();
-						for image_data in image_data {
-							data.push(((image_data as f32 * shape.style.fill[0] as f32) / 255.0) as u8);
-							data.push(((image_data as f32 * shape.style.fill[1] as f32) / 255.0) as u8);
-							data.push(((image_data as f32 * shape.style.fill[2] as f32) / 255.0) as u8);
-							data.push(((image_data as f32 * shape.style.fill[3] as f32) / 255.0) as u8);
-						}
-						let slice = data.as_slice();
-						let map = tiny_skia::PixmapRef::from_bytes(slice, metrics.width as u32, metrics.height as u32).unwrap();
-						pixmap.draw_pixmap(glyph.x as i32, glyph.y as i32, map, &Default::default(), transform, Some(&mask))
-					}
-				},
-				ShapeElement::Image(_) => {},
-				_ => {
-					let path = parse_shape(&shape.shape.into_mask(), &shape.style);
-					let mut paint = tiny_skia::Paint::default();
-					paint.set_color_rgba8(shape.style.fill[0], shape.style.fill[1], shape.style.fill[2], shape.style.fill[3]);
-					paint.anti_alias = false;
-
-					pixmap.fill_path(&path, &paint, tiny_skia::FillRule::Winding, Default::default(), Some(&mask));
-
-					if shape.style.stroke_width > 0.0 && shape.style.stroke_color[3] != 0 {
-						paint.set_color_rgba8(shape.style.fill[0], shape.style.fill[1], shape.style.fill[2], shape.style.fill[3]);
-						pixmap.stroke_path(&path, &paint, &tiny_skia::Stroke { width: shape.style.stroke_width, ..Default::default() }, Default::default(), Some(&mask));
-					}
-				}
-			}
-		};
-
-		write_texture_with_data(window_size, &self.empty_texture.texture, &self.queue, pixmap.data());
-
-		// clear sections
-		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("Render Texture Encoder"),
-		});
-
-		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-			label: Some("Render Pass"),
-			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-				view: &view,
-				resolve_target: None,
-				ops: wgpu::Operations {
-					load: wgpu::LoadOp::Clear(wgpu::Color {
-						r: (input.background_color[0] as f64 / 255.0).powf(2.2),
-						g: (input.background_color[1] as f64 / 255.0).powf(2.2),
-						b: (input.background_color[2] as f64 / 255.0).powf(2.2),
-						a: (input.background_color[3] as f64 / 255.0).powf(2.2),
-					}),
-					store: wgpu::StoreOp::Store,
-				},
-			})],
-			..Default::default()
-		});
-		render_pass.set_pipeline(&self.render_pipeline);
-		render_pass.set_bind_group(0, &self.empty_texture.bind_group, &[]);
-
-		self.queue.write_buffer(&self.vertex_buffer[0], 0, bytemuck::cast_slice(&VERTICES));
-		self.queue.write_buffer(&self.index_buffer[0], 0, bytemuck::cast_slice(&INDICES));
-		render_pass.set_vertex_buffer(0, self.vertex_buffer[0].slice(..));
-		render_pass.set_index_buffer(self.index_buffer[0].slice(..), wgpu::IndexFormat::Uint32);
-		render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
-		drop(render_pass);
-
-		self.queue.submit(Some(encoder.finish()));
-		output.present();
-
 		Ok(())
 	}
 
@@ -596,6 +526,72 @@ impl State {
 
 	pub(crate) fn remove_texture(&mut self, id: &String) {
 		self.texture_map.remove(id);
+	}
+
+	pub(crate) fn registrate_shader(&mut self, id: String, shader_code: String) {
+		self.fragment_shaders.insert(id.clone(), self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+			label: Some(&id),
+			source: wgpu::ShaderSource::Wgsl(format!("{}\n{}",SHADER_STRUCT ,shader_code).into()),
+		}));
+	}
+
+	pub(crate) fn remove_shader(&mut self, id: String) {
+		self.fragment_shaders.remove(&id);
+	}
+
+	pub(crate) fn change_shader(&mut self, id: Option<String>) {
+		self.current_shader = id;
+		let render_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("Render Pipeline Layout"),
+			bind_group_layouts: &[&self.empty_texture.layout, &self.uniform_bind_group_layout],
+			push_constant_ranges: &[],
+		});
+		let module = if let Some(shader_id) = &self.current_shader {
+			if let Some(shader) = self.fragment_shaders.get(shader_id) {
+				shader
+			}else {
+				&self.shader_default
+			}
+		}else {
+			&self.shader_default
+		};
+			
+		let render_pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("Render Pipeline"),
+			layout: Some(&render_pipeline_layout),
+			vertex: wgpu::VertexState {
+				module: &self.shader_default,
+				entry_point: "vs_main",
+				buffers: &[desc()],
+			},
+			fragment: Some(wgpu::FragmentState {
+				module,
+				entry_point: "fs_main",
+				targets: &[Some(wgpu::ColorTargetState {
+					format: self.config.format,
+					blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+					write_mask: wgpu::ColorWrites::ALL,
+				})],
+			}),
+			primitive: wgpu::PrimitiveState {
+				topology: wgpu::PrimitiveTopology::TriangleList, 
+				strip_index_format: None,
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: Some(wgpu::Face::Back),
+				polygon_mode: wgpu::PolygonMode::Fill,
+				unclipped_depth: false,
+				conservative: false,
+			},
+			depth_stencil: None,
+			multisample: wgpu::MultisampleState {
+				count: 1, 
+				mask: !0, 
+				alpha_to_coverage_enabled: false, 
+			},
+			multiview: None,
+		});
+		self.render_pipeline = render_pipeline;
+		self.surface.configure(&self.device, &self.config);
 	}
 }
 

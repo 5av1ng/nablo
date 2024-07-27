@@ -91,6 +91,7 @@ impl<'a, T: Num> Slider<'a, T> {
 
 impl<T: Num> Widget for Slider<'_, T> {
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter) {
+		painter.set_transform_origin(response.area.area[0]);
 		// logic
 		let from = self.from.to_f64();
 		let to = self.to.to_f64();
@@ -120,22 +121,21 @@ impl<T: Num> Widget for Slider<'_, T> {
 		let light_factor = if let Some(lost_hover_time) = response.lost_hovering_time() {
 			if let Some(hover_time) = response.hovering_time(){
 				if hover_time - lost_hover_time > animation_time {
-					1.0 - animation.caculate(&lost_hover_time).unwrap_or_else(|| 1.0)
+					1.0 - animation.caculate(&lost_hover_time).unwrap_or(1.0)
 				}else {
-					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or_else(|| 0.0)
+					animation.caculate(&(hover_time - lost_hover_time - lost_hover_time)).unwrap_or(0.0)
 				}
 			}else {
 				0.0
 			}
 		}else if let Some(hover_time) = response.hovering_time() {
-			animation.caculate(&hover_time).unwrap_or_else(|| 1.0)
+			animation.caculate(&hover_time).unwrap_or(1.0)
 		}else {
 			0.0
 		} * ui.style().brighten_factor;
 
 		// actual draw
 		let origin = response.area.left_top();
-		let background_color = ui.style().background_color.brighter(0.15);
 		let text_area = self.text.text_area(painter);
 
 		let inner_f64 = (if self.input.to_f64() > to {
@@ -152,10 +152,12 @@ impl<T: Num> Widget for Slider<'_, T> {
 		} * self.width + text_area.width() + ui.style().space - 8.0;
 		let cir_y = (response.area.height() - 16.0) / 2.0;
 		painter.set_position(origin + Vec2::new(text_area.width() + ui.style().space, cir_y + 4.0));
-		painter.set_color(background_color);
+		painter.set_color(ui.style().slider_unreached_color);
 		painter.rect(Vec2::new(self.width, 8.0), Vec2::same(4.0));
+		painter.set_color(ui.style().slider_reached_color);
+		painter.rect(Vec2::new(cir_x - text_area.width() - ui.style().space + 6.0, 8.0), Vec2::same(4.0));
 		painter.set_position(origin + Vec2::new(cir_x, cir_y));
-		painter.set_color(background_color.brighter(0.1));
+		painter.set_color(ui.style().slider_peek_color);
 		painter.cir(8.0);
 
 		let input_text: Text = format!("{}{}{}", self.prefix, inner_f64, self.suffix).into();

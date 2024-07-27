@@ -1,3 +1,4 @@
+use crate::Instant;
 use winit::event_loop::ControlFlow;
 use nablo_shape::prelude::Vec2;
 use crate::state::State;
@@ -36,6 +37,7 @@ impl<T: App + 'static> Manager<T> {
 	fn handle_event_loop<E>(mut self, frame: Option<usize>, event_loop: EventLoop<E>) -> Result<()> {
 		#[cfg(target_os = "android")]
 		self.app.android_app(self.android_app.clone());
+		self.app.on_open(&mut self.integrator.ui);
 
 		// TODO: make this changable
 		self.clipboard = match ClipboardProvider::new() {
@@ -116,29 +118,17 @@ impl<T: App + 'static> Manager<T> {
 								} 
 								match event {
 									WindowEvent::RedrawRequested => {
-										if self.settings.soft_rendering {
-											let output = self.integrator.frame(vec!(), |ui| self.app.app(ui));
-											for event in &output.output_events {
-												self.handle_event(event.clone(), &mut state)
-											}
-											match state.soft_render(output) {
-												Ok(_) => {}
-												Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-												Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-												Err(e) => eprintln!("{:?}", e),
-											};
-										}else {
-											let output = self.integrator.frame_vertexs(vec!(), |ui| self.app.app(ui));
-											for event in &output.output_events {
-												self.handle_event(event.clone(), &mut state)
-											}
-											match state.render(output) {
-												Ok(_) => {}
-												Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-												Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-												Err(e) => eprintln!("{:?}", e),
-											};
+										let output = self.integrator.frame_vertexs(vec!(), |ui| self.app.app(ui));
+										for event in &output.output_events {
+											self.handle_event(event.clone(), &mut state)
 										}
+										let cursor_position = self.integrator.ui.input().cursor_position().unwrap_or(Vec2::ZERO) / self.integrator.ui.window_area().width_and_height() * Vec2::same(2.0) - Vec2::same(1.0);
+										match state.render(output, cursor_position, self.timer.elapsed().as_seconds_f32()) {
+											Ok(_) => {}
+											Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+											Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
+											Err(e) => eprintln!("{:?}", e),
+										};
 										
 										if let Some(inner) = frame {
 											if id > inner {
@@ -166,15 +156,19 @@ impl<T: App + 'static> Manager<T> {
 				let mut state: Option<State> = None;
 				event_loop.run(move |winit_event, elwt, control_flow| {
 					*control_flow = self.settings.control_flow;
+					if self.need_close {
+						self.app.on_close(&mut self.integrator.ui);
+						*control_flow = ControlFlow::Exit;
+					}
 					match winit_event {
 						Event::Resumed => {
 							let w_bind;
 							if let Some(t) = self.settings.size {
-								w_bind = WindowBuilder::new().build(&elwt).unwrap();
+								w_bind = WindowBuilder::new().build(elwt).unwrap();
 								w_bind.set_min_inner_size(Some(LogicalSize::new(t.x as f64, t.y as f64)));
 								self.integrator.event(&NabloEvent::Resized(t));
 							}else {
-								w_bind = WindowBuilder::new().with_inner_size(LogicalSize::new(640.0,480.0)).build(&elwt).unwrap();
+								w_bind = WindowBuilder::new().with_inner_size(LogicalSize::new(640.0,480.0)).build(elwt).unwrap();
 								self.integrator.event(&NabloEvent::Resized(Vec2::new(640.0,480.0)));
 							}
 							w_bind.set_title(&self.settings.title);
@@ -214,7 +208,9 @@ impl<T: App + 'static> Manager<T> {
 								}
 							} 
 							match event {
-								WindowEvent::CloseRequested => {*control_flow = ControlFlow::Exit},
+								WindowEvent::CloseRequested => {
+									self.need_close = self.app.on_exit(&mut self.integrator.ui);
+								},
 								WindowEvent::Resized(physical_size) => {
 									if let Some(state) = &mut state {
 										state.resize(Vec2::new(physical_size.width as f32, physical_size.height as f32))
@@ -226,36 +222,24 @@ impl<T: App + 'static> Manager<T> {
 						},
 						Event::RedrawRequested(_) => {
 							if let Some(state) = &mut state {
-								if self.settings.soft_rendering {
-									let output = self.integrator.frame(vec!(), |ui| self.app.app(ui));
-									for event in &output.output_events {
-										self.handle_event(event.clone(), state)
-									}
-									match state.soft_render(output) {
-										Ok(_) => {}
-										Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-										Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-										Err(e) => eprintln!("{:?}", e),
-									};
-								}else {
-									let output = self.integrator.frame_vertexs(vec!(), |ui| self.app.app(ui));
-									for event in &output.output_events {
-										self.handle_event(event.clone(), state)
-									}
-									match state.render(output) {
-										Ok(_) => {}
-										Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-										Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-										Err(e) => eprintln!("{:?}", e),
-									};
+								let output = self.integrator.frame_vertexs(vec!(), |ui| self.app.app(ui));
+								for event in &output.output_events {
+									self.handle_event(event.clone(), state)
 								}
+								let cursor_position = self.integrator.ui.input().cursor_position().unwrap_or(Vec2::ZERO) / self.integrator.ui.window_area().width_and_height() * Vec2::same(2.0) - Vec2::same(1.0);
+								match state.render(output, cursor_position, self.timer.elapsed().as_seconds_f32()) {
+									Ok(_) => {}
+									Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+									Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+									Err(e) => eprintln!("{:?}", e),
+								};
 								
 								if let Some(inner) = frame {
 									if id > inner {
 										*control_flow = ControlFlow::Exit
 									}
 								}
-								id = id + 1;
+								id += 1;
 								if let Some(t) = &window {
 									t.request_redraw();
 								}
@@ -271,7 +255,6 @@ impl<T: App + 'static> Manager<T> {
 				});
 			}
 		}
-		
 	}
 
 	#[cfg(not(target_os = "android"))]
@@ -299,7 +282,9 @@ impl<T: App + 'static> Manager<T> {
 			settings: Settings::default(),
 			integrator: Integrator::default(),
 			app,
-			clipboard: None
+			clipboard: None,
+			need_close: false,
+			timer: Instant::now()
 		}
 	}
 
@@ -310,7 +295,9 @@ impl<T: App + 'static> Manager<T> {
 			settings,
 			integrator: Integrator::default(),
 			app,
-			clipboard: None
+			clipboard: None,
+			need_close: false,
+			timer: Instant::now()
 		}
 	}
 
@@ -323,6 +310,8 @@ impl<T: App + 'static> Manager<T> {
 			app,
 			clipboard: None,
 			android_app,
+			need_close: false,
+			timer: Instant::now()
 		}
 	}
 
@@ -335,6 +324,8 @@ impl<T: App + 'static> Manager<T> {
 			app,
 			clipboard: None,
 			android_app,
+			need_close: false,
+			timer: Instant::now()
 		}
 	}
 
@@ -362,6 +353,10 @@ impl<T: App + 'static> Manager<T> {
 				}
 			},
 			OutputEvent::RequireSoftKeyboard(_) => {},
+			OutputEvent::Close => self.need_close = true,
+			OutputEvent::ChangeShader(id) => state.change_shader(id),
+			OutputEvent::RemoveShader(id) => state.remove_shader(id),
+			OutputEvent::RegstrateShader(id, code) => state.registrate_shader(id, code),
 		}
 	}
 
@@ -409,7 +404,6 @@ impl Default for Settings {
 			fullscreen: false,
 			icon: None,
 			control_flow: ControlFlow::Poll,
-			soft_rendering: false,
 		}
 	}
 }

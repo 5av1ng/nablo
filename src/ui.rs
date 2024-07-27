@@ -35,13 +35,17 @@ use crate::Style;
 use crate::Instant;
 use std::collections::HashMap;
 use anyhow::Result;
+use std::sync::Mutex;
+use std::sync::Arc;
+
+// note: currently we do not using ui in different thread, therefore `lock` should not fail. 
 
 impl Default for Ui {
 	fn default() -> Self {
 		Self {
-			memory: HashMap::new(),
-			memory_clip: vec!(),
-			memory_clip_total: vec!(),
+			memory: Arc::new(Mutex::new(HashMap::new())),
+			memory_clip: Arc::new(Mutex::new(vec!())),
+			memory_clip_total: Arc::new(Mutex::new(vec!())),
 			shape: Shapes::default(),
 			available_position: Vec2::same(Style::default().space),
 			last_frame: Instant::now(),
@@ -54,11 +58,13 @@ impl Default for Ui {
 			paint_style: PaintStyle::default(),
 			layout: Layout::default(),
 			output_events: vec!(),
-			texture_id: vec!(),
+			texture_id: Arc::new(Mutex::new(vec!())),
 			offset: Vec2::ZERO,
 			parent_area: None,
 			start_position: Vec2::ZERO,
 			window_crossed: Area::new_with_origin([640.0,480.0].into()),
+			// scale_factor: 1.0,
+			collapse_times: 0
 		}
 	}
 }
@@ -91,35 +97,48 @@ impl Ui {
 	/// add a widget with exist response.
 	pub fn add_widget(&mut self, id: String, mut widget: impl Widget, response: Response) -> Response {
 		let mut response = response;
-		self.memory_clip.push(id.clone());
-		self.memory_clip_total.push(id.clone());
-		response.id = id.clone();
-		if let Some(t) = self.memory.get_mut(&id) {
-			t.access_time = t.access_time + 1;
+		// response.area = Area::new(response.area.area[0] * self.paint_style.scale_factor, response.area.area[1] * self.paint_style.scale_factor);
+		let mut memory_clip = self.memory_clip.lock().unwrap();
+		let mut memory_clip_total = self.memory_clip_total.lock().unwrap();
+		let mut memory = self.memory.lock().unwrap();
+		memory_clip.push(id.clone());
+		memory_clip_total.push(id.clone());
+		drop(memory_clip);
+		drop(memory_clip_total);
+		response.id.clone_from(&id);
+		let need_draw = if let Some(t) = memory.get_mut(&id) {
+			t.access_time += 1;
 			let area = response.area;
 			response.read(&t.response.metadata);
 			response.area = area;
 			t.response = response.clone();
 			t.update_area = area.cross_part(&self.window_crossed);
+			true
+		}else {
+			memory.insert(id.clone(), MemoryTemp {
+				update_area: response.area.cross_part(&self.window_crossed),
+				response: response.clone(),
+				access_time: 1,
+			});
+			false
+		};
+		drop(memory);
+		if need_draw {
 			let mut shapes = self.painter();
 			widget.draw(self, &response, &mut shapes);
 			self.shape.append(shapes);
-		}else {
-			self.memory.insert(id.clone(), MemoryTemp {
-				update_area: response.area.cross_part(&self.window_crossed),
-				response,
-				access_time: 1,
-			});
-		};
-		self.memory.get(&id).unwrap().response.clone()
+		}
+		let memory = self.memory.lock().unwrap();
+		memory.get(&id).unwrap().response.clone()
 	}
 
+	/// not vary precise
 	pub fn container_id<C: Container>(&mut self, container: &C) -> String {
 		let id = container.get_id(self);
 		let mut index = 0;
-		let available_id: Vec<_> = self.available_id.0.split("||").collect();
+		let available_id: Vec<String> = self.available_id.0.split("||").map(|inner| inner.to_string()).collect();
 		for (i, a) in available_id.iter().enumerate().rev() {
-			if String::from(*a) == id {
+			if *a == id {
 				index = i;
 			}
 		}
@@ -127,14 +146,17 @@ impl Ui {
 		if index == 0 {
 			return format!("{}||{}!!{}", self.available_id.0 ,id, id);
 		}
-		for i in 0..index {
-			if available_id[i].is_empty() {
+		for (i, available_id) in available_id.iter().enumerate() {
+			if available_id.is_empty() {
 				continue;
 			}
-
-			input_id = format!("{}||{}", input_id, available_id[i]);
+			if i >= index {
+				break;
+			}
+			input_id = format!("{}||{}", input_id, available_id);
 		}
 		let input_id = format!("{}||{}!!{}", input_id ,id, id);
+		// println!("container: {input_id}");
 		// let input_id = format!("{}||{}!!{}", self.available_id.0 ,id, id);
 		input_id
 	}
@@ -147,8 +169,10 @@ impl Ui {
 		let layer = container.layer(self);
 		let shapes_len = self.shape.raw_shape.len();
 		let mut painter = Painter::from_area(&area);
+		painter.scale_factor(self.paint_style.scale_factor);
 		painter.set_layer(layer); 
-		let input_id = format!("{}||{}!!{}",self.available_id.0 ,id, id);
+		let input_id = format!("{}||{}!!{}", self.available_id.0 ,id, id);
+		// println!("input_id: {input_id}");
 		let is_clickable = container.is_clickable(self);
 		let is_dragable = container.is_dragable(self);
 		let response = self.response_update(size, input_id.clone(), is_clickable, is_dragable);
@@ -177,8 +201,8 @@ impl Ui {
 	}
 
 	/// add a response area to ui
-	pub fn response(&mut self, area: Area, is_clickable: bool, is_dragable: bool) -> Response {
-		let mut area = area;
+	pub fn response(&mut self, mut area: Area, is_clickable: bool, is_dragable: bool) -> Response {
+		// let mut area = Area::new(area.area[0] * self.paint_style.scale_factor, area.area[1] * self.paint_style.scale_factor);
 		self.position_change(&mut area);
 		Response {
 			area,
@@ -190,7 +214,7 @@ impl Ui {
 	/// add a response area to ui, and add a update task before next frame
 	pub fn response_update(&mut self, area: Area, id: String, is_clickable: bool, is_dragable: bool) -> Response {
 		let response = self.response(area, is_clickable, is_dragable);
-		self.add_widget(id, Empty{} , response)
+		self.add_widget(id, Empty::EMPTY , response)
 	}
 
 	/// get where should we print
@@ -260,15 +284,16 @@ impl Ui {
 	/// too bad!
 	///
 	/// note you must make sure that the id you put in is id of a added [`crate::Widget`] or [`crate::Container`], otherwise the data will not be saved.
-	pub fn memory_save(&mut self, id: &String, data: impl serde::Serialize) {
-		if let Some(t) = self.memory.get_mut(id) {
+	pub fn memory_save(&mut self, id: &str, data: impl serde::Serialize) {
+		if let Some(t) = self.memory.lock().unwrap().get_mut(id) {
 			t.response.metadata.other_info = to_json(&data)
 		}
 	}
 
 	/// read someting in `nablo` memory, will send out default value if deserilizing error occurs. [`Option::None`] for not find value
-	pub fn memory_read<T: for<'a> serde::Deserialize<'a> + Default>(&mut self, id: &String) -> Option<T> {
-		let back = self.memory.get(id)?;
+	pub fn memory_read<T: for<'a> serde::Deserialize<'a> + Default>(&mut self, id: &str) -> Option<T> {
+		let memory = self.memory.lock().unwrap();
+  		let back = memory.get(id)?;
 		parse_json(&back.response.metadata.other_info)
 	}
 
@@ -276,7 +301,7 @@ impl Ui {
 	pub fn available_id(&mut self) -> String {
 		let (ui_id, num_id) = &mut self.available_id;
 		let back = format!("{ui_id}----{num_id}");
-		*num_id = *num_id + 1;
+		*num_id += 1;
 		back
 	}
 
@@ -295,8 +320,101 @@ impl Ui {
 		self.window_crossed
 	}
 
+	/// change scale factor
+	pub fn scale_factor(&mut self, scale_factor: f32) {
+		self.paint_style.scale_factor = scale_factor
+	} 
+
+	/// returns events
+	pub fn events(&mut self) -> &Vec<Event> {
+		&self.events
+	}
+
+	/// close current window
+	pub fn close(&mut self) {
+		self.send_output_event(OutputEvent::Close);
+	}
+
+	/// change current shader to indexed shader, you can use [`Self::registrate_shader`] to registrate / modified one
+	pub fn change_current_shader(&mut self, id: Option<String>) {
+		if let Some(inner) = id {
+			self.send_output_event(OutputEvent::ChangeShader(Some(inner)));
+		}else {
+			self.send_output_event(OutputEvent::ChangeShader(None));
+		}
+	}
+
+	/// registrate a new shader, currently, we do not allow to modify vertex stage in default mannager.
+	///
+	/// other window manager may not function as follows
+	///
+	/// the code you insert should be like 
+	/// 
+	/// @fragment
+	/// fn fs_main(in: VertexOutput) -> @location(0) vec4f {}
+	///
+	/// where `VertexOutput` deifined as
+	///
+	/// ```wgsl
+	/// // all normalized
+	/// struct VertexOutput {
+	///     @builtin(position) clip_position: vec4f,
+	///     @location(0) color: vec4f,
+	///     @location(1) is_texture: u32,
+	/// }
+	/// ```
+	///
+	/// and you can use `uniforms` varible which is defined as 
+	///
+	/// ```wgsl
+	/// struct Uniform {
+	///     // normalized
+	///     mouse_position: vec2<f32>,
+	///     // as seconds
+	///     time: f32,
+	///     // what you set in [`Painter::set_info`]
+	///     info: u32,
+	///     // normalized, this is the scissor rect's position
+	///     position: vec2f,
+	///     // normalized, this is the scissor rect's width_and_height
+	///     width_and_height: vec2f,
+	///     // unnormalied
+	///     window_xy: vec2f,
+	/// }
+	/// ```
+	///
+	/// and texture like this
+	/// ```wgsl
+	/// @group(0)@binding(0)
+	/// var t_diffuse: texture_2d<f32>;
+	/// @group(0)@binding(1)
+	/// var s_diffuse: sampler;
+	/// ```
+	///
+	/// Note: *dont* call this every frame, or `nablo` will be unstandably lagging.
+	///
+	/// # Panics
+	/// when shader_code is invaild
+	pub fn registrate_shader(&mut self, id: impl Into<String>, shader_code: String) {
+		self.send_output_event(OutputEvent::RegstrateShader(id.into(), shader_code));
+	}
+
+	pub fn remove_shader(&mut self, id: impl Into<String>) {
+		self.send_output_event(OutputEvent::RemoveShader(id.into()));
+	}
+
+	/// send a output event to host
+	pub fn send_output_event(&mut self, output_event: OutputEvent) {
+		self.output_events.push(output_event);
+	}
+
+	/// every time you enter a container, this will add one.
+	pub fn collapsing_times(&self) -> usize {
+		self.collapse_times
+	}
+
 	/// to get a sub reigon of current window, usually used in [`crate::Container`], returns all inner element's [`crate::Response`] and a empty [`crate::Response`].
-	pub fn sub_ui<R, C: Container>(&mut self, area: Area, id: String, paint_style: PaintStyle, offset: Vec2, container: &mut C ,widgets: impl FnOnce(&mut Ui, &mut C) -> R) -> InnerResponse<R> {
+	pub(crate) fn sub_ui<R, C: Container>(&mut self, area: Area, id: String, paint_style: PaintStyle, offset: Vec2, container: &mut C ,widgets: impl FnOnce(&mut Ui, &mut C) -> R) -> InnerResponse<R> {
 		let id = format!("{}||{}",self.available_id.0 ,id);
 		let mut sub_ui = Self {
 			memory: self.memory.clone(),
@@ -316,18 +434,17 @@ impl Ui {
 			texture_id: self.texture_id.clone(),
 			offset,
 			parent_area: Some(self.window_area()), 
+			collapse_times: self.collapse_times + 1, 
 			..Default::default()
 		};
 		let return_value = widgets(&mut sub_ui, container);
-		let inner_response: Vec<Response> = sub_ui.memory.par_iter().filter_map(|(key, response)| {
-			if utf8_slice::len(&key) < utf8_slice::len(&id) {
+		let inner_response: Vec<Response> = sub_ui.memory.lock().unwrap().par_iter().filter_map(|(key, response)| {
+			if utf8_slice::len(key) < utf8_slice::len(&id) {
 				None
+			}else if (utf8_slice::till(key, utf8_slice::len(&id)) == id) && (!(utf8_slice::from(key, utf8_slice::len(&id)).contains("||")) || utf8_slice::from(key, utf8_slice::len(&id)).split("||").count() == 2) {
+				Some(response.response.clone())
 			}else {
-				if (utf8_slice::till(&key, utf8_slice::len(&id)) == id) && (!(utf8_slice::from(&key, utf8_slice::len(&id)).contains("||")) || utf8_slice::from(&key, utf8_slice::len(&id)).split("||").count() == 2) {
-					Some(response.response.clone())
-				}else {
-					None
-				}
+				None
 			}
 		}).collect();
 		let area = Area::ZERO;
@@ -347,40 +464,32 @@ impl Ui {
 		(cover, inner_response, return_value).into()
 	}
 
-	/// returns events
-	pub fn events(&mut self) -> &Vec<Event> {
-		&self.events
-	}
-
-	/// send a output event to host
-	pub fn send_output_event(&mut self, output_event: OutputEvent) {
-		self.output_events.push(output_event);
-	}
-
 	pub(crate) fn position_change(&mut self, area: &mut Area) {
 		if self.layout.is_inverse {
 			if self.layout.is_horizental {
 				self.available_position	= self.available_position - Vec2::new(area.width() + self.style.space, 0.0);
-				area.move_delta_to(Vec2::new(-area.width(), 0.0));
+				area.move_by(Vec2::new(-area.width(), 0.0));
 			}else {
 				self.available_position	= self.available_position - Vec2::new(0.0, area.height() + self.style.space);
-				area.move_delta_to(Vec2::new(0.0, -area.height()));
+				area.move_by(Vec2::new(0.0, -area.height()));
 			}
+		}else if self.layout.is_horizental {
+			self.available_position	= self.available_position + Vec2::new(area.width() + self.style.space, 0.0);
 		}else {
-			if self.layout.is_horizental {
-				self.available_position	= self.available_position + Vec2::new(area.width() + self.style.space, 0.0);
-			}else {
-				self.available_position	= self.available_position + Vec2::new(0.0, area.height() + self.style.space);
-			}
+			self.available_position	= self.available_position + Vec2::new(0.0, area.height() + self.style.space);
 		}
 	}
 
 	/// this function will collect added widgets between last called, will automaticly called during every loop.
-	pub(crate) fn count(&mut self) -> Vec<&Response> {
-		let back = self.memory_clip.clone().into_iter().filter_map(|x| {
-			Some(&self.memory.get(&x)?.response)
+	pub(crate) fn count(&mut self) -> Vec<Response> {
+		let memory_clip_arc = self.memory_clip.clone();
+		let mut memory_clip = memory_clip_arc.lock().unwrap();
+		let memory = self.memory.lock().unwrap();
+
+		let back = memory_clip.clone().into_iter().filter_map(|x| {
+			Some(memory.get(&x)?.response.clone())
 		}).collect();
-		self.memory_clip.clear();
+		memory_clip.clear();
 		back
 	}
 
@@ -465,7 +574,7 @@ impl Ui {
 				self.shape.parsed_shapes.push(ParsedShape::Image(inner, shape.style))
 			}else {
 				let (vertexs, indices, clip_area) = shape.into_vertexs(self.window.width_and_height());
-				self.shape.parsed_shapes.push(ParsedShape::Vertexs { vertexs, indices, clip_area })
+				self.shape.parsed_shapes.push(ParsedShape::Vertexs { vertexs, indices, clip_area, scale_factor: shape.style.scale_factor, info: shape.style.info })
 			}
 		}
 	}
@@ -477,13 +586,16 @@ impl Ui {
 		self.available_position = Vec2::same(self.style.space);
 		self.last_frame = Instant::now();
 		self.available_id.1 = 0;
-		self.memory_clip.clear();
+		self.memory_clip.lock().unwrap().clear();
 		self.output_events.clear();
+		let scale_factor = self.paint_style.scale_factor;
 		self.paint_style = Default::default();
+		self.scale_factor(scale_factor);
 		self.style = Default::default();
 		// for borrow checker
 		let mut remove_key = vec!();
-		for (key, temp) in &mut self.memory {
+		let mut memory = self.memory.lock().unwrap();
+		for (key, temp) in memory.iter_mut() {
 			if temp.access_time > 1 {
 				println!("Warn: Id conflict: {}, access time: {}", key, temp.access_time);
 			}
@@ -494,7 +606,7 @@ impl Ui {
 			};
 		}
 		for key in remove_key {
-			self.memory.remove(&key);
+			memory.remove(&key);
 		}
 	}
 
@@ -505,8 +617,9 @@ impl Ui {
 		let mut data_3 = vec!();
 		let mut data_4 = vec!();
 		let mut data_5 = vec!();
-		for id in self.memory_clip_total.iter().rev() {
-			if let Some(res) = self.memory.remove(id) {
+		let mut memory = self.memory.lock().unwrap();
+		for id in self.memory_clip_total.lock().unwrap().iter().rev() {
+			if let Some(res) = memory.remove(id) {
 				match res.response.metadata.layer {
 					Layer::Background => data_5.push((id.clone(), res)),
 					Layer::Bottom => data_4.push((id.clone(), res)),
@@ -519,9 +632,9 @@ impl Ui {
 		}
 		let mut update = |input: &mut Vec<(String, MemoryTemp)>| {
 			for (id, res) in input {
-				res.response.metadata.update(&mut self.input_state, &res.update_area);
+				res.response.metadata.update(&mut self.input_state, &res.update_area, self.paint_style.scale_factor);
 				// println!("{}", res.response.id);
-				self.memory.insert(id.to_string(), res.clone());
+				memory.insert(id.to_string(), res.clone());
 			}
 		};
 		update(&mut data_0);
@@ -530,7 +643,7 @@ impl Ui {
 		update(&mut data_3);
 		update(&mut data_4);
 		update(&mut data_5);
-		self.memory_clip_total.clear();
+		self.memory_clip_total.lock().unwrap().clear();
 	}
 }
 
@@ -590,7 +703,8 @@ impl Ui {
 	/// add a texture from path, this function will add a texture when only current id is not been taken. for svg using [`Self::create_texture_svg`]
 	pub fn create_texture_from_path<P: AsRef<Path>>(&mut self, path: P, id: impl Into<String>) -> Result<()> {
 		let id = id.into();
-		if !self.texture_id.contains(&id) {
+		let mut texture_id = self.texture_id.lock().unwrap();
+		if !texture_id.contains(&id) {
 			let diffuse_image = Reader::open(path)?.decode()?;
 			let diffuse_rgba = diffuse_image.to_rgba8();
 			let dimensions = diffuse_image.dimensions();
@@ -600,7 +714,7 @@ impl Ui {
 				id: id.clone(),
 			};
 			self.output_events.push(OutputEvent::TextureChange(image));
-			self.texture_id.push(id);
+			texture_id.push(id);
 		}
 		Ok(())
 	}
@@ -608,9 +722,10 @@ impl Ui {
 	/// add a texture, this function will add a texture when only current id is not been taken. for svg using [`Self::create_texture_svg`]
 	pub fn create_texture(&mut self, bytes: &[u8], id: impl Into<String>) -> Result<()> {
 		let id = id.into();
-		if !self.texture_id.contains(&id) {
+		let mut texture_id = self.texture_id.lock().unwrap();
+		if !texture_id.contains(&id) {
 			self.output_events.push(OutputEvent::TextureChange(texture(bytes, id.clone())?));
-			self.texture_id.push(id);
+			texture_id.push(id);
 		}
 		Ok(())
 	}
@@ -621,9 +736,10 @@ impl Ui {
 	/// `size.x < 0.0 || size.y < 0.0 || size.x.is_infinite() || size.y.is_infinite()`
 	pub fn create_texture_svg(&mut self, bytes: &[u8], size: Vec2, id: impl Into<String>) -> Result<()> {
 		let id = id.into();
-		if !self.texture_id.contains(&id) {
+		let mut texture_id = self.texture_id.lock().unwrap();
+		if !texture_id.contains(&id) {
 			self.output_events.push(OutputEvent::TextureChange(texture_svg(bytes, size, id.clone())?));
-			self.texture_id.push(id);
+			texture_id.push(id);
 		}
 		Ok(())
 	}
@@ -633,9 +749,10 @@ impl Ui {
 	/// Note: *dont* call this every frame, or `nablo` will be unstandably lagging.
 	pub fn change_texture(&mut self, bytes: &[u8], id: impl Into<String>) -> Result<()> {
 		let id = id.into();
+		let mut texture_id = self.texture_id.lock().unwrap();
 		self.output_events.push(OutputEvent::TextureChange(texture(bytes, id.clone())?));
-		if !self.texture_id.contains(&id) {
-			self.texture_id.push(id);
+		if !texture_id.contains(&id) {
+			texture_id.push(id);
 		}
 		Ok(())
 	}
@@ -648,9 +765,10 @@ impl Ui {
 	/// `size.x < 0.0 || size.y < 0.0 || size.x.is_infinite() || size.y.is_infinite()`
 	pub fn change_texture_svg(&mut self, bytes: &[u8], size: Vec2, id: impl Into<String>) -> Result<()> {
 		let id = id.into();
+		let mut texture_id = self.texture_id.lock().unwrap();
 		self.output_events.push(OutputEvent::TextureChange(texture_svg(bytes, size, id.clone())?));
-		if !self.texture_id.contains(&id) {
-			self.texture_id.push(id);
+		if !texture_id.contains(&id) {
+			texture_id.push(id);
 		}
 		Ok(())
 	}
@@ -658,7 +776,8 @@ impl Ui {
 	/// delete a texture by using id
 	pub fn delete_texture(&mut self, id: impl Into<String>) {
 		let id = id.into();
-		self.texture_id.retain(|a| a != &id);
+		let mut texture_id = self.texture_id.lock().unwrap();
+		texture_id.retain(|a| a != &id);
 		self.output_events.push(OutputEvent::TextureDelete(id));
 	}
 }
@@ -687,17 +806,17 @@ impl Ui {
 	}
 
 	/// add a [`crate::widgets::DragableValue`].
-	pub fn dragable_value<'a, T: Num>(&mut self, input: &'a mut T) -> Response {
+	pub fn dragable_value<T: Num>(&mut self, input: &mut T) -> Response {
 		self.add(DragableValue::new(input))
 	}
 
 	/// add a [`crate::widgets::Slider`].
-	pub fn slider<'a, T: Num>(&mut self, range: RangeInclusive<T> ,input: &'a mut T, text: impl Into<Text>) -> Response {
+	pub fn slider<T: Num>(&mut self, range: RangeInclusive<T> ,input: &mut T, text: impl Into<Text>) -> Response {
 		self.add(Slider::new(range, input, text))
 	}
 
 	/// add a [`crate::widgets::SingleTextInput`].
-	pub fn single_input<'a>(&mut self, input: &'a mut String) -> Response {
+	pub fn single_input(&mut self, input: &mut String) -> Response {
 		self.add(SingleTextInput::new(input).set_width(180.0))
 	}
 
@@ -708,6 +827,16 @@ impl Ui {
 			*select = !*select
 		}
 		res
+	}
+
+	/// add a [`crate::widgets::Empty`].
+	pub fn empty(&mut self, area: impl Into<Vec2>) -> Response {
+		self.add(Empty::new(area.into()))
+	}
+
+	/// add a [`crate::widgets::ProgressBar`].
+	pub fn progress_bar(&mut self, progress: impl Num, attach: bool, status: Status) -> Response {
+		self.add(ProgressBar::new(progress).attach(attach).status(status))
 	}
 
 	/// add a [`crate::widgets::SelectableValue`].
@@ -743,10 +872,15 @@ impl Ui {
 	pub fn message_provider<R>(&mut self, id: impl Into<String>, inner_widget: impl FnOnce(&mut Ui, &mut MessageProvider) -> R) -> InnerResponse<R> {
 		self.show(&mut MessageProvider::new(id), inner_widget)
 	}
+
+	/// add a [`crate::container::TooltipProvider`]
+	pub fn tooltip<R>(&mut self, id: impl Into<String>, tip: impl Into<Text>, inner_widget: impl FnOnce(&mut Ui, &mut TooltipProvider) -> R) -> InnerResponse<R> {
+		self.show(&mut TooltipProvider::new(id, tip), inner_widget)
+	}
 }
 
 fn texture(bytes: &[u8], id: String) -> Result<Image> {
-	let diffuse_image = image::load_from_memory(&bytes)?;
+	let diffuse_image = image::load_from_memory(bytes)?;
 	let diffuse_rgba = diffuse_image.to_rgba8();
 	let dimensions = diffuse_image.dimensions();
 	Ok(Image {

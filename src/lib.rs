@@ -89,7 +89,8 @@ use std::collections::HashMap;
 use nablo_shape::math::Area;
 use nablo_shape::math::Vec2;
 use time::OffsetDateTime;
-
+use std::sync::Mutex;
+use std::sync::Arc;
 
 /// will replace when typing in a input setted `is_password = true`
 pub const PASSWORD: char = '●';
@@ -132,7 +133,7 @@ cfg_if::cfg_if!{
 			pub fullscreen: bool,
 			pub icon: Option<(Vec<u8>,Vec2)>,
 			pub control_flow: ControlFlow,
-			pub soft_rendering: bool,
+			// pub soft_rendering: bool,
 		}
 
 		/// a trait for your app
@@ -142,6 +143,12 @@ cfg_if::cfg_if!{
 			#[cfg(target_os = "android")]
 			/// you may want handle android main when in android platform, this will run before actually running window manage process.
 			fn android_app(&mut self, app: prelude::AndroidApp);
+			/// the function runs before window opened
+			fn on_open(&mut self, _ui: &mut Ui) {}
+			/// the function calls when close button is clicked, returns whether you want close or not
+			fn on_exit(&mut self, _ui: &mut Ui) -> bool { true }
+			/// the function calls when closing.
+			fn on_close(&mut self, _ui: &mut Ui) {}
 		}
 
 		/// your handle to nablo
@@ -151,6 +158,8 @@ cfg_if::cfg_if!{
 			clipboard: Option<ClipboardContext>,
 			/// where you add wigets
 			integrator: Integrator,
+			need_close: bool,
+			timer: Instant,
 			/// your app
 			pub app: T,
 			#[cfg(target_os = "android")]
@@ -235,9 +244,9 @@ impl Shapes {
 
 /// what you use for adding your widgets
 pub struct Ui {
-	memory: HashMap<String, MemoryTemp>,
-	memory_clip: Vec<String>,
-	memory_clip_total: Vec<String>,
+	memory: Arc<Mutex<HashMap<String, MemoryTemp>>>,
+	memory_clip: Arc<Mutex<Vec<String>>>,
+	memory_clip_total: Arc<Mutex<Vec<String>>>,
 	shape: Shapes,
 	last_frame: Instant,
 	available_position: Vec2,
@@ -250,11 +259,13 @@ pub struct Ui {
 	paint_style: PaintStyle,
 	layout: Layout,
 	output_events: Vec<OutputEvent>,
-	texture_id: Vec<String>,
+	texture_id: Arc<Mutex<Vec<String>>>,
 	offset: Vec2,
 	parent_area: Option<Area>,
 	start_position: Vec2,
 	window_crossed: Area,
+	// scale_factor: f32,
+	collapse_times: usize
 }
 
 #[derive(Default, Clone)]
@@ -314,17 +325,17 @@ struct TouchState {
 	is_click_used: bool
 }
 
-impl Into<MouseState> for MouseButton {
-	fn into(self) -> MouseState {
+impl From<MouseButton> for MouseState {
+	fn from(val: MouseButton) -> Self {
 		MouseState {
-			button: self,
+			button: val,
 			is_drag_used: false,
 			is_click_used: false
 		}
 	}
 }
 
-/// anything implementing Widget can be added by using [`Ui::add_with_id`]
+/// anything implementing Widget can be added by using [`Ui::add`]
 pub trait Widget {
 	/// tell `nablo` how to draw your widget
 	fn draw(&mut self, ui: &mut Ui, response: &Response, painter: &mut Painter);
@@ -420,25 +431,25 @@ pub trait Container {
 	/// handle logic part for your containner before showing widgets. 
 	/// the input painter will use as the painter to draw widgets, the painter's offset will be used as container's offect. 
 	/// returns if there's need show inner widgets, true for show.
-	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &String) -> bool;
+	fn begin(&mut self, ui: &mut Ui, painter: &mut Painter, response: &Response, id: &str) -> bool;
 	/// handle logic part for your containner after showing widgets.
-	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>, id: &String);
+	fn end<R>(&mut self, ui: &mut Ui, painter: &mut Painter, inner_response: &InnerResponse<R>, id: &str);
 }
 
-pub(crate) fn parse_json<T: for<'a> serde::Deserialize<'a> + Default>(input: &String) -> T  {
+pub(crate) fn parse_json<T: for<'a> serde::Deserialize<'a> + Default>(input: &str) -> T  {
 	match serde_json::from_str(input) {
-		Ok(t) => return t,
+		Ok(t) => t,
 		Err(_) => {
-			return T::default()
+			T::default()
 		}
-	};
+	}
 }
 
 pub(crate) fn to_json<T: serde::Serialize>(input: &T) -> String {
 	match serde_json::to_string_pretty(input) {
-		Ok(t) => return t,
+		Ok(t) => t,
 		Err(_) => {
-			return String::new()
+			String::new()
 		}
-	};
+	}
 }
